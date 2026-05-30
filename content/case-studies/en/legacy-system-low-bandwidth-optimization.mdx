@@ -1,0 +1,55 @@
+---
+title: "Legacy System Performance Rescue: When the Problem Was the Client's Network, Not the Code"
+date: "2025-11-01"
+description: "Inheriting an unfamiliar legacy project with reported read/write performance and data accuracy issues. After using AI to rapidly build system understanding, I located the real bottleneck — the client's low-bandwidth network — and refactored data transfer accordingly, cutting frontend requests to 1/5–1/4."
+tags: ["Performance", "AI Collaboration", "API Design", "Frontend", "Backend", "System Diagnosis"]
+challenge: "Taking over an unfamiliar legacy system with reported read/write performance and data accuracy issues. Internal testing showed everything working, but the client's verification still failed — how do you find the true root cause and solve it effectively without knowing the code intimately?"
+outcome: "Identified the real bottleneck as the client's low-bandwidth, unstable connection. Refactored frontend/backend data transfer and API design for low-network scenarios, cutting frontend requests to 1/5–1/4 of the original and dramatically improving real-world experience."
+---
+
+## Project Background
+
+I took over an existing project I **hadn't built myself**. The client reported issues with read/write performance and data accuracy.
+
+Since I hadn't written the relevant modules, diving straight into code details would have been expensive. I took a different approach: first using AI tools to rapidly build a holistic understanding of the system, then analysing the client-reported problems and deriving preliminary solutions.
+
+## Core Challenge
+
+After the first round of fixes, internal test results matched expectations perfectly — but when the client re-verified, **the problem persisted**.
+
+This is the trickiest situation: the development side measures "normal," the client side experiences "broken." When the test environment can't reproduce the problem, conventional debugging breaks down.
+
+## The Solution
+
+### Stepping outside the code to redefine the problem
+
+Further analysis surfaced the real key factor:
+
+**The client's network environment — low bandwidth and an unstable connection.**
+
+This explained why dev testing passed while real-world use kept failing. The bottleneck was never "is the code correct," but "is the system suited to its actual environment."
+
+### A full refactor for low-network scenarios
+
+Once the root cause was confirmed, the strategy shifted from fixing logic to redesigning for low bandwidth:
+
+- **Simulating low-bandwidth with DevTools**: reproducing the client's real conditions on the dev side so the problem became testable
+- **Adjusting data transfer strategy**: reducing unnecessary round-trips and payload size
+- **Refactoring API design to reduce request frequency**: merging requests and adjusting data granularity to cut network dependency at the source
+
+## Outcomes
+
+| Metric | Result |
+|--------|--------|
+| Frontend request count | Reduced to **1/5 – 1/4** of original |
+| Real-world experience | Significantly improved (low-network scenarios) |
+| Diagnosis method | AI-assisted understanding + environment reproduction |
+
+## Reflection: AI's Role in Engineering Practice
+
+This case also clarified my understanding of AI collaboration:
+
+- AI excels at accelerating "**understanding unfamiliar systems**" and "**producing standard solutions**"
+- But "**real-world constraints**" and "**cross-layer decisions**" still require an engineer's judgement
+
+The underlying implementation can be delegated to AI, but the critical decision — recognising "the real bottleneck is the network, not the code" — still comes from deep understanding of both technology and context. This is the core of a senior engineer's value: not just writing correct code, but asking the right question.

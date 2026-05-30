@@ -1,0 +1,97 @@
+{
+  "nav": {
+    "home": "Home",
+    "about": "About",
+    "experience": "Experience",
+    "caseStudies": "Case Studies",
+    "projects": "Projects",
+    "blog": "Writing",
+    "resume": "Resume",
+    "connect": "Connect"
+  },
+  "home": {
+    "eyebrow": "Senior Full-Stack Engineer",
+    "headline_1": "AI × Industrial Systems",
+    "headline_2": "Turning Complexity into Advantage",
+    "subheadline": "Applying AI and modern technology across industrial floors, edge devices, and cloud platforms — I build digital systems that are maintainable, evolvable, and resilient under real-world constraints.",
+    "cta_primary": "View Case Studies",
+    "cta_secondary": "Download Resume",
+    "stats_repos": "repositories integrated",
+    "stats_downtime": "troubleshooting time",
+    "stats_redundancy": "dev redundancy cut",
+    "stats_sync": "data sync target",
+    "featured_label": "Featured Case",
+    "writing_label": "Latest Writing",
+    "skills_label": "Technical Skills"
+  },
+  "about": {
+    "eyebrow": "About",
+    "headline": "An Engineer Working at the Intersection of Systems",
+    "bio_1": "A senior full-stack engineer with 5+ years of experience, my work spans industrial environments, digital humanities, information systems, and self-initiated projects.",
+    "bio_2": "My core strength is integrating edge device data, monitoring workflows, AI inference, and cloud business systems into stable, maintainable, long-term-evolvable digital architectures.",
+    "bio_3": "I continuously practise self-awareness and AI-augmented development, believing the true mark of a senior engineer is knowing which problem environments they solve best.",
+    "skills_eyebrow": "Technical Skills",
+    "frontend": "Frontend",
+    "backend": "Backend & Database",
+    "industrial": "Industrial & Edge",
+    "ai_tools": "AI & Dev Efficiency",
+    "security": "Security & Compliance",
+    "testimonials_eyebrow": "Peer Feedback",
+    "testimonials_heading": "What Colleagues Say"
+  },
+  "experience": {
+    "eyebrow": "Experience",
+    "headline": "Career Timeline",
+    "present": "Present"
+  },
+  "caseStudies": {
+    "eyebrow": "Case Studies",
+    "headline": "Solving Real-World Complexity",
+    "read_more": "Read Full Case Study"
+  },
+  "projects": {
+    "eyebrow": "Projects",
+    "headline": "Work Across Multiple Domains",
+    "view_project": "View Project",
+    "coming_soon": "More projects coming soon"
+  },
+  "blog": {
+    "eyebrow": "Writing",
+    "headline": "Engineering Thoughts & Observations",
+    "read_more": "Read More",
+    "min_read": "min read"
+  },
+  "resume": {
+    "eyebrow": "Resume",
+    "headline": "Full Background",
+    "download": "Download PDF Resume",
+    "coming_soon": "PDF resume is being prepared. Check back soon.",
+    "contact_cta": "For immediate enquiries, feel free to reach out directly."
+  },
+  "connect": {
+    "eyebrow": "Connect",
+    "headline": "Let's Talk About Your Project",
+    "description": "Whether it's system integration consulting, AI adoption assessment, technical collaboration, or just an engineering chat — I'd love to hear from you.",
+    "name_label": "Name",
+    "email_label": "Email",
+    "message_label": "Message",
+    "name_placeholder": "Your name",
+    "email_placeholder": "your@email.com",
+    "message_placeholder": "Tell me about your project or idea...",
+    "send": "Send Message",
+    "linkedin": "LinkedIn",
+    "or": "or reach me via"
+  },
+  "footer": {
+    "built_with": "Built with Next.js",
+    "rights": "© 2026 Gary Wu. All rights reserved."
+  },
+  "common": {
+    "back": "Back",
+    "loading": "Loading...",
+    "dark_mode": "Dark Mode",
+    "light_mode": "Light Mode",
+    "lang_zh": "中文",
+    "lang_en": "EN"
+  }
+}

@@ -1,0 +1,72 @@
+---
+title: "Rock System: A Full-Stack Business Platform Built From 0 to 1"
+date: "2025-03-01"
+featured: true
+order: 2
+description: "A full-stack business system I solely planned, built, and maintain for land-administration agent firms — covering case management, fine-grained permissions, seat control, 2FA, and containerised delivery. A genuinely operable, long-term-maintainable product."
+tags: ["React", "TypeScript", "Strapi", "PostgreSQL", "Docker", "Material UI", "Refine", "Firebase", "Full-Stack", "System Architecture", "Access Control", "Containerisation"]
+challenge: "How do you take a land-administration agency system — with highly interrelated business flows, fine-grained permissions, and differing requirements per client — from 0 to 1 into a long-term-maintainable, containerised full-stack product?"
+outcome: "As sole responsible engineer across the entire SDLC, I built a containerised React + Strapi + PostgreSQL architecture with env-driven fine-grained permissions, seat control, session heartbeat, and 2FA — achieving reproducible delivery and long-term operational capability."
+---
+
+## Project Background
+
+Rock System is a full-stack business system I solely planned, built, and maintain — providing land-administration agent firms with a practical, deployable information platform. It spans the frontend interface, backend API and business logic, database design, authentication/authorisation, and a Dockerised deployment flow, with support for ongoing version evolution and operations.
+
+- **Frontend** built with React, TypeScript, Refine, and Material UI — handling case management, billing, petty cash, reports, permission rendering, and daily workflows.
+- **Backend** centred on Strapi v4 + TypeScript, connected to PostgreSQL — handling data models, authentication/authorisation, seat management, heartbeat sync, and business APIs.
+- **Deployment** is containerised, enabling stable delivery, updates, and maintenance within client environments.
+
+## Core Challenges
+
+The difficulty wasn't just building frontend and backend — it was bringing a genuinely operable commercial system from 0 to 1.
+
+### 1. Complex business flows
+
+Case management, billing, transactions, role permissions, petty cash, reports, and document output are highly interrelated, with many data fields and process states. Different clients have different flow and permission requirements, so the system had to balance **flexibility** with **data consistency**.
+
+### 2. Permission and authorisation control
+
+This went well beyond ordinary login — it included fine-grained page and action permissions, per-client permission differences, seat limits, authorisation-state sync, offline grace periods, and session heartbeats, all while balancing **security, maintainability, and user experience**.
+
+### 3. Delivery and operations
+
+Because the project needed Dockerised deployment and ongoing maintenance, it couldn't consider only the development stage — env variable management, database persistence, service start/stop, version updates, error diagnosis, and documentation had to be designed in from the start.
+
+## My Role and Contributions
+
+As the **sole responsible engineer**, I led the entire SDLC: requirement understanding, system design, data modelling, frontend/backend development, deployment design, and subsequent maintenance and iteration.
+
+- Planned the overall architecture, separating frontend, backend, database, and deployment responsibilities
+- Built an extensible modular frontend integrating case management, forms, permissions, reports, PDF, and multiple business-flow pages
+- Designed backend content models, APIs, and business logic with Strapi + TypeScript, backed by PostgreSQL
+- Implemented authorisation management, seat control, session heartbeat, offline grace, Firebase login, and 2FA
+- Designed an **env-driven permission configuration mechanism** so different clients apply different permission rules on the same core system
+- Built Docker and Docker Compose deployment for consistent delivery of frontend, backend, and PostgreSQL
+- Maintained documentation, test scripts, and diagnosis flows to support ongoing updates and operations
+
+## Technical Outcomes
+
+Rock System's most representative achievement isn't a single feature — it's establishing a **long-term-maintainable full-stack product capability**.
+
+**Frontend**: An enterprise internal-system architecture on React + TypeScript, supporting extensive forms, data tables, conditional fields, case-flow pages, reports, PDF export, and multi-module integration — with permission control, i18n, state management, and UI consistency to reduce future extension cost.
+
+**Backend**: Extending Strapi into business-oriented APIs and management capabilities — authorisation-state queries, heartbeat sync, user activity tracking, Firebase login, 2FA, session control, and usage reporting — making it not just a CRUD platform but a backend service that sustains real business operations.
+
+**System integration**: Containerised deployment of frontend, backend, and PostgreSQL gives the project a reproducible delivery model, easing installation, updates, and maintenance across environments. For a long-running internal system, this means **productisation thinking** from day one.
+
+## Tech Stack
+
+| Layer | Technologies |
+|-------|-------------|
+| Frontend | React 18, TypeScript, Refine.dev, Material UI, Redux Toolkit, React Router, React Hook Form / Formik, Recharts, jsPDF / React PDF, Vite |
+| Backend | Strapi v4, TypeScript, PostgreSQL, Firebase Admin, OTP / 2FA, custom authorisation / session-heartbeat / usage-reporting modules |
+| DevOps | Docker, Docker Compose, Nginx, env-driven configuration, containerised database and service management |
+
+## Lessons Learned
+
+This project clarified that full-stack capability isn't just writing frontend and backend — it's integrating requirements, data structures, permission models, deployment, and operations into a system that runs for the long term. The truly hard part usually isn't one API or one UI page, but keeping the architecture clear, data consistent, and deployment stable as features keep growing — while keeping maintenance cost controllable.
+
+Another key takeaway was valuing **productisation engineering thinking**: permission config can't be hard-coded, authorisation can't assume only online scenarios, and deployment can't stop at "runs on my machine." These seemingly ops- or architecture-leaning decisions directly determine whether a product can be delivered reliably.
+
+For future optimisation, I'd continue strengthening automated test coverage, monitoring and alerting, and clearer module boundaries — so the system maintains predictable quality and extensibility through ongoing iteration.

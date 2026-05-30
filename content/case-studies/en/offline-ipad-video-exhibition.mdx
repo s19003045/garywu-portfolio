@@ -1,0 +1,60 @@
+---
+title: "Offline Exhibition Setup: Self-Hosting a Local API on iPad to Kill Low-Bandwidth Video Lag"
+date: "2025-09-01"
+description: "A client displayed a video-heavy React site on iPads at an exhibition, but the venue's low bandwidth caused severe video lag. I built a local API server on the iPad itself, serving video locally to eliminate network dependency entirely."
+tags: ["Edge", "Alpine Linux", "Python", "React", "Performance", "Offline Architecture"]
+challenge: "The exhibition venue had extremely low bandwidth, causing severe video playback lag on a React display site. The video was the core content and couldn't be removed, and the site still needed frequent pre-event edits — how do you eliminate the network's impact on video without sacrificing content or remote update flexibility?"
+outcome: "Built a local Python API server on the iPad using iSH (Alpine Linux), serving video locally while images still loaded remotely. Video playback became fully independent of venue bandwidth, while preserving the site's remote update flexibility."
+---
+
+## Project Background
+
+A client needed to display a React.js website containing multiple videos on iPads at an exhibition. The problem: **the venue's network bandwidth was extremely low**, causing severe delays in video loading and playback, badly hurting the on-site experience.
+
+The videos were already compressed, but it didn't help — because the bottleneck wasn't file size, it was **the network environment itself**.
+
+## Core Challenges
+
+This case had unusual constraints that ruled out several common solutions:
+
+- **Can't remove the video**: it was the centrepiece content, irreplaceable
+- **Can't rely on compression alone**: already compressed; further compression would ruin quality
+- **Site still needed frequent edits**: content was being adjusted right up to the event, so a fully baked offline bundle wasn't viable
+- **Runs on iPad**: no full OS, so deployment options were limited
+
+In other words, the real problem wasn't "is the code correct" — it was "**how does the system adapt to an environment with terrible networking**." This is exactly the class of problem I keep encountering.
+
+## The Solution
+
+### Core idea: move the video source onto the device itself
+
+Since the remote network was the bottleneck, the answer was to make **video not travel over the network at all**. My approach: stand up a local API server directly on the iPad so the site's video requests hit `localhost`, while images and other assets still loaded remotely — eliminating video lag while keeping the site remotely updatable.
+
+### Technical Implementation
+
+Running a server on iPadOS isn't straightforward. I used this stack:
+
+- **iSH**: an Alpine Linux–based shell environment for iOS/iPadOS, letting the iPad run Linux tooling
+- **Alpine Linux + apk**: installed required tools via the `apk` package manager
+- **Python API server**: served the local video files
+- **OpenRC**: Alpine's service manager, configured so the server auto-starts with iSH
+- **Shell Script**: automated the entire startup flow to reduce on-site complexity
+
+The rough steps:
+
+1. Downloaded the Python project and videos to the iPad via Google Drive
+2. Used iSH's mount feature to connect to the iPad filesystem and access the video files
+3. Configured the local API server as an OpenRC auto-start service, kept running in the background
+4. Adjusted the display build: **video requests pointed to the local API, image requests stayed remote**
+
+## Outcomes
+
+- **Video playback became fully independent of venue bandwidth** — because it no longer touched the network at all
+- **Remote flexibility preserved**: non-critical assets like images could still be updated remotely, so pre-event edits weren't blocked
+- **Simplified on-site operation**: auto-start + background execution meant exhibition staff didn't need to run any commands manually
+
+## Reflection
+
+This case shares something with most performance problems I've handled: **the real bottleneck is often not the program logic, but how the system fits its actual environment.**
+
+Rather than circling endlessly on "correct code," it's worth stepping back to ask: what environment does this system actually run in? Once you treat "low bandwidth" as a design premise rather than an accident, the direction of the solution changes completely — sometimes the answer isn't to optimise requests, but to **keep the critical assets off the wire entirely**.

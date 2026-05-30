@@ -1,0 +1,111 @@
+---
+title: "Solar Panel Recycling System: An Edge-to-Cloud Industrial Integration Architecture"
+date: "2025-05-04"
+featured: true
+order: 1
+description: "From IPC core program design and PLC communication to SCADA data flows, Cloud API integration, and IPFS verifiable storage — a complete industrial digital system spanning 15+ repositories."
+tags: ["Edge-to-Cloud", "IPC", "SCADA", "PLC", "System Integration", "Industrial Systems", "Industrial System Integration Architect", "Cross-System Architecture"]
+challenge: "How do you build a maintainable, long-term-evolvable cross-system integration architecture in a complex environment with unstable industrial networking, resource-constrained IPC devices, and multiple concurrent device versions?"
+outcome: "Reduced on-site troubleshooting time by ~50%, reduced redundant development work by ~75%, and enabled device versions 1.0 through 2.x to share a single IPC core program architecture."
+---
+
+## Project Background
+
+A solar panel recycling system with the goal of fully digitalising the recycling process — from on-site device panel identification and automated processing, to cloud-based order management and production tracking — forming a complete edge-to-cloud data loop.
+
+The project spanned 15+ repositories and involved integration across multiple organisations and technical layers, making it one of the largest and most technically complex projects I've participated in.
+
+## Core Challenges
+
+### Real-World Industrial Constraints
+
+- **Unstable networking**: Factory floor networks cannot guarantee stable connectivity
+- **Resource-constrained IPC**: Edge devices have limited compute resources — they can't scale like cloud servers
+- **Multi-version concurrency**: Devices evolved from 1.0 to 2.x, requiring version difference support without major rewrites
+- **Cross-company collaboration**: Long-term technical collaboration with the equipment manufacturer's engineering team, requiring precise requirement alignment
+
+### Complexity of System Integration
+
+The following systems needed to operate in coordination:
+- 5 IPC edge modules
+- PLC communication (OPC UA)
+- SCADA monitoring system
+- AI object recognition model (YOLOv8)
+- 3 Cloud APIs
+- IPFS verifiable file storage
+- Order management system
+- Plant management system
+
+## My Role and Contributions
+
+### IPC Core Program Architecture Design
+
+Responsible for designing and developing the IPC core program — the edge-side heart of the entire system. The core program needed to:
+
+- Bridge PLC communication, reading device status and control commands in real time
+- Coordinate the workflows of 5 IPC edge modules
+- Integrate AI inference results into the recycling decision flow
+- Manage image capture and local storage
+- Handle recycling data uploads to the cloud
+
+### Config-Driven Multi-Version Architecture
+
+For the version management challenge, I designed a config-driven architectural approach:
+
+```
+Device 1.0 ──────────────────────────────────────────────────
+Device 2.x ──────────────────────────────────────────────────
+                              ↓
+                   Single IPC Core Program
+                              ↓
+         Version differences isolated to config files
+```
+
+This concentrated version differences in configuration management rather than program logic, **reducing redundant development work by approximately 75%**.
+
+### Data Reliability Mechanisms
+
+For unstable field network conditions, I designed a multi-layer data protection mechanism:
+
+- **Local logging**: All critical operations continuously recorded
+- **Offline backup**: No data loss when network is interrupted
+- **Scheduled upload**: Automatic sync when connection is restored
+- **Data cleanup**: Prevents edge storage exhaustion
+
+Target: critical data backup and sync completed within **24 hours**; on-site troubleshooting time reduced by approximately **50%**.
+
+### Cross-Company Technical Collaboration
+
+As the primary technical interface between the company and the equipment manufacturer's engineering team, I participated in weekly technical meetings to:
+
+- Clarify cross-organisational requirements and translate them into actionable technical specifications
+- Align architectural design and implementation direction
+- Reduce requirement misunderstanding gaps in cross-company collaboration
+
+## Technical Outcomes
+
+| Metric | Result |
+|--------|--------|
+| On-site troubleshooting time | Reduced ~50% |
+| Redundant development work | Reduced ~75% |
+| Data sync target | Completed within 24 hours |
+| System knowledge coverage | 90%+ of repositories |
+| Version support | 1.0 to 2.x sharing one architecture |
+
+## Tech Stack
+
+**Edge**: Python, OPC UA (PLC communication), YOLOv8 (AI inference), OpenCV
+
+**Cloud Integration**: REST APIs, IPFS
+
+**Data Management**: PostgreSQL, scheduled tasks, local backup mechanisms
+
+**Collaboration**: Git, multi-repository management
+
+## Lessons Learned
+
+The biggest takeaway from this project was a deep understanding of the complexity of industrial system integration — the problems often aren't just technical implementation. More often they involve:
+
+1. **Understanding real constraints**: Field network, device resources, and operator habits all differ from development environments
+2. **Designing evolvable architecture**: Systems need to remain maintainable through continuously changing requirements
+3. **Cross-organisational technical communication**: Gaps in requirement understanding are often harder to solve than technical problems

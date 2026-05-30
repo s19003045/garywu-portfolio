@@ -1,0 +1,97 @@
+{
+  "nav": {
+    "home": "首頁",
+    "about": "關於我",
+    "experience": "工作經歷",
+    "caseStudies": "案例分析",
+    "projects": "作品集",
+    "blog": "文章",
+    "resume": "履歷",
+    "connect": "聯絡我"
+  },
+  "home": {
+    "eyebrow": "Senior Full-Stack Engineer",
+    "headline_1": "AI × 工業系統",
+    "headline_2": "讓複雜變成優勢",
+    "subheadline": "運用 AI 與現代技術，我在工業現場、邊緣端與雲端之間建立可維護、可演進的數位系統——讓複雜流程變得可追蹤、可管理、可強韌。",
+    "cta_primary": "查看案例",
+    "cta_secondary": "下載履歷",
+    "stats_repos": "repositories 整合",
+    "stats_downtime": "現場排查時間",
+    "stats_redundancy": "重複開發削減",
+    "stats_sync": "資料同步目標",
+    "featured_label": "代表案例",
+    "writing_label": "最新文章",
+    "skills_label": "技術能力"
+  },
+  "about": {
+    "eyebrow": "About",
+    "headline": "在系統交叉口工作的工程師",
+    "bio_1": "5 年以上資深全端工程師，工作場景橫跨工業現場、數位人文、資訊系統與個人實驗性專案。",
+    "bio_2": "我的核心能力在於：將設備端資料、監控流程、AI 推論與雲端業務系統整合為穩定、可維護、長期演進的數位架構。",
+    "bio_3": "我持續練習自我覺察與 AI 協作，相信真正能區分資深工程師的，是他在哪種場景中能最有效地解決問題。",
+    "skills_eyebrow": "Technical Skills",
+    "frontend": "Frontend",
+    "backend": "Backend & Database",
+    "industrial": "Industrial & Edge",
+    "ai_tools": "AI & Dev Efficiency",
+    "security": "Security & Compliance",
+    "testimonials_eyebrow": "Peer Feedback",
+    "testimonials_heading": "共事夥伴怎麼說"
+  },
+  "experience": {
+    "eyebrow": "Experience",
+    "headline": "職涯軌跡",
+    "present": "至今"
+  },
+  "caseStudies": {
+    "eyebrow": "Case Studies",
+    "headline": "解決真實場景中的複雜問題",
+    "read_more": "閱讀完整案例"
+  },
+  "projects": {
+    "eyebrow": "Projects",
+    "headline": "橫跨多領域的實作",
+    "view_project": "查看專案",
+    "coming_soon": "更多作品整理中"
+  },
+  "blog": {
+    "eyebrow": "Writing",
+    "headline": "工程思考與觀察",
+    "read_more": "閱讀全文",
+    "min_read": "分鐘閱讀"
+  },
+  "resume": {
+    "eyebrow": "Resume",
+    "headline": "完整工作背景",
+    "download": "下載 PDF 履歷",
+    "coming_soon": "PDF 履歷準備中，敬請期待。",
+    "contact_cta": "如需立即了解更多，歡迎直接聯絡我。"
+  },
+  "connect": {
+    "eyebrow": "Connect",
+    "headline": "一起談談你的專案",
+    "description": "無論是系統整合諮詢、AI 導入評估、技術合作，或只是想交流工程想法，都歡迎寫信給我。",
+    "name_label": "姓名",
+    "email_label": "電子郵件",
+    "message_label": "訊息",
+    "name_placeholder": "你的姓名",
+    "email_placeholder": "your@email.com",
+    "message_placeholder": "告訴我你的專案或想法...",
+    "send": "傳送訊息",
+    "linkedin": "LinkedIn",
+    "or": "或透過社群聯絡"
+  },
+  "footer": {
+    "built_with": "Built with Next.js",
+    "rights": "© 2026 Gary Wu. All rights reserved."
+  },
+  "common": {
+    "back": "返回",
+    "loading": "載入中...",
+    "dark_mode": "深色模式",
+    "light_mode": "淺色模式",
+    "lang_zh": "中文",
+    "lang_en": "EN"
+  }
+}

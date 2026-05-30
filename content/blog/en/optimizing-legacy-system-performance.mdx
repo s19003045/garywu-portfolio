@@ -1,0 +1,43 @@
+---
+title: "Optimising Legacy System Performance: When the Problem Isn't the Code"
+date: "2026-04-29"
+description: "Inheriting an existing project with reported read/write performance issues, I used AI to rapidly build system understanding — only to discover the real bottleneck was the client's network environment, not the code itself."
+tags: ["System Optimisation", "AI Collaboration", "Backend", "Frontend", "Engineering Thinking"]
+---
+
+I recently took over an existing project that I hadn't originally built. The client was reporting issues with "read/write performance" and "data accuracy."
+
+Since I hadn't written the relevant modules, I didn't dive into code details immediately. Instead, I used AI tools to quickly build a holistic understanding of the system, analyse the client-reported problems, and derive preliminary solutions.
+
+With AI assistance, we completed one round of problem clarification and fixes. Internal test results met expectations.
+
+However, when the client re-verified, the problems persisted.
+
+## The Real Bottleneck
+
+Further analysis revealed the true key factor:
+
+**The client's network environment — low bandwidth and unstable connectivity.**
+
+This explained why everything worked fine in the development environment but continued to fail in actual use.
+
+The lesson was clear: system problems don't necessarily come from whether the code is correct — they often come from whether the system is suited to the actual environment.
+
+## The Optimisation Strategy
+
+The subsequent optimisation strategy shifted from fixing logic to designing the entire system for low-network-speed scenarios:
+
+- Using browser DevTools to simulate low-bandwidth environments during testing
+- Adjusting data transfer strategies between frontend and backend
+- Refactoring API design to reduce request frequency
+
+The result: frontend request count was reduced to **1/5 to 1/4** of the original, with significantly improved real-world user experience.
+
+## AI's Role in Engineering Practice
+
+This experience reinforced my understanding of AI's role in engineering:
+
+- AI excels at accelerating "problem understanding" and "producing standard solutions"
+- But for "real-world environmental constraints" and "cross-layer decisions," engineers still need to intervene
+
+The underlying implementation can be delegated to AI, but critical decisions still come from deep understanding of both the technology and the context.
