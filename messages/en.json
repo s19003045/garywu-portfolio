@@ -5,21 +5,22 @@
     "experience": "Experience",
     "caseStudies": "Case Studies",
     "projects": "Projects",
+    "lab": "Lab",
     "blog": "Writing",
     "resume": "Resume",
     "connect": "Connect"
   },
   "home": {
-    "eyebrow": "Senior Full-Stack Engineer",
-    "headline_1": "AI × Industrial Systems",
-    "headline_2": "Turning Complexity into Advantage",
-    "subheadline": "Applying AI and modern technology across industrial floors, edge devices, and cloud platforms — I build digital systems that are maintainable, evolvable, and resilient under real-world constraints.",
+    "eyebrow": "Senior Full-Stack Engineer · Industrial System Integration",
+    "headline_1": "Between the Factory Floor and the Cloud",
+    "headline_2": "Building Maintainable Integrated Systems",
+    "subheadline": "I specialise in industrial system integration, edge-to-cloud architecture, and full-stack development — connecting device data, operational workflows, and cloud services into maintainable, traceable, and long-term-evolvable software systems.",
     "cta_primary": "View Case Studies",
     "cta_secondary": "Download Resume",
     "stats_repos": "repositories integrated",
-    "stats_downtime": "troubleshooting time",
+    "stats_downtime": "query efficiency",
     "stats_redundancy": "dev redundancy cut",
-    "stats_sync": "data sync target",
+    "stats_sync": "off-site DR cycle",
     "featured_label": "Featured Case",
     "writing_label": "Latest Writing",
     "skills_label": "Technical Skills"
@@ -37,7 +38,8 @@
     "ai_tools": "AI & Dev Efficiency",
     "security": "Security & Compliance",
     "testimonials_eyebrow": "Peer Feedback",
-    "testimonials_heading": "What Colleagues Say"
+    "testimonials_heading": "What Colleagues Say",
+    "meta_description": "Gary Wu — senior full-stack engineer in industrial system integration and edge-to-cloud architecture. 5+ years connecting IPC, SCADA, AI, and cloud into maintainable, evolvable systems."
   },
   "experience": {
     "eyebrow": "Experience",
@@ -55,6 +57,17 @@
     "view_project": "View Project",
     "coming_soon": "More projects coming soon"
   },
+  "lab": {
+    "eyebrow": "Lab",
+    "headline": "Experiments & Self-Initiated Work",
+    "intro": "A collection of side projects I started myself — from POCs and creative ideas integrating technology, to apps that showcase technical capability. Often without a client, driven by curiosity and a spirit of experimentation.",
+    "status_live": "Live",
+    "status_planning": "Planning",
+    "status_poc": "POC",
+    "visit": "Visit site",
+    "view_repo": "View source",
+    "coming_soon": "More experiments in progress"
+  },
   "blog": {
     "eyebrow": "Writing",
     "headline": "Engineering Thoughts & Observations",
@@ -65,6 +78,7 @@
     "eyebrow": "Resume",
     "headline": "Full Background",
     "download": "Download PDF Resume",
+    "print_button": "Or print via browser",
     "coming_soon": "PDF resume is being prepared. Check back soon.",
     "contact_cta": "For immediate enquiries, feel free to reach out directly."
   },
@@ -80,7 +94,9 @@
     "message_placeholder": "Tell me about your project or idea...",
     "send": "Send Message",
     "linkedin": "LinkedIn",
-    "or": "or reach me via"
+    "or": "or reach me via",
+    "form_closed_title": "Contact Form Temporarily Closed",
+    "form_closed_desc": "The online messaging form is currently paused. Feel free to reach me directly through any of the channels below and I'll get back to you soon."
   },
   "footer": {
     "built_with": "Built with Next.js",

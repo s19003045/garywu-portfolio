@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendContactEmail, isGmailConfigured } from '@/lib/gmail';
 import { verifyToken, looksLikeSpam, isDuplicate } from '@/lib/anti-spam';
+import { siteConfig } from '@/lib/site';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +23,14 @@ function isValidEmail(email: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  // Feature flag — contact form is disabled site-wide.
+  if (!siteConfig.features.contactForm) {
+    return NextResponse.json(
+      { error: 'Contact form is currently disabled.' },
+      { status: 403 }
+    );
+  }
+
   const ip =
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     req.headers.get('x-real-ip') ||

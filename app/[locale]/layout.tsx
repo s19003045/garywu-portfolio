@@ -5,8 +5,6 @@ import { routing } from '@/i18n/routing';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
-import { JsonLd } from '@/components/seo/JsonLd';
-import { personSchema, websiteSchema } from '@/lib/structured-data';
 import type { Metadata } from 'next';
 
 export async function generateStaticParams() {
@@ -41,8 +39,6 @@ export default async function LocaleLayout({
 
   return (
     <NextIntlClientProvider locale={locale} messages={messages}>
-      <JsonLd data={personSchema()} />
-      <JsonLd data={websiteSchema()} />
       <ThemeProvider>
         <Navbar />
         <main id="main-content" className="flex-1 pt-14">{children}</main>

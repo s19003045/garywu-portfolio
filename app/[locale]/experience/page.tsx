@@ -9,23 +9,64 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   return { title: t('headline') };
 }
 
-const experienceZh = [
+interface ExperienceItem {
+  id: string;
+  period: string;
+  role: string;
+  company: string;
+  type: string;
+  summary?: string;
+  /** Flat bullet list (used when a role doesn't need project grouping). */
+  highlights?: string[];
+  /** Grouped contributions — each group is one project / domain. */
+  groups?: { label: string; items: string[] }[];
+  tags: string[];
+}
+
+const experienceZh: ExperienceItem[] = [
   {
     id: 'senior-fse',
     period: '2020/10 — 至今',
     role: 'Senior Full-Stack Engineer',
-    company: '工業系統整合專案',
+    company: '工業系統整合 · 數位人文 · 文化機構專案',
     type: 'Full-time',
-    highlights: [
-      '主導橫跨 15+ repositories 的太陽能板回收系統，負責 IPC 架構設計與 edge-to-cloud 跨系統整合',
-      '串聯 SCADA、PLC（OPC UA）、5 個 IPC edge modules、YOLOv8 AI 模型、3 個 Cloud APIs 與 IPFS 可驗證儲存',
-      '導入 config-driven 設計支援設備版本 1.0–2.x，減少約 75% 重複開發工作',
-      '設計離線備份與排程同步機制，資料同步控制於 24 小時內，降低約 50% 現場排查時間',
-      '掌握 90%+ 系統 repositories，能快速定位跨服務問題並評估影響範圍',
-      '作為公司與設備商工程部主要技術窗口，長期參與週會並釐清跨組織需求',
-      '支援 AI 物件辨識模型從資料準備、訓練到部署與 IPC 整合的完整流程',
+    summary:
+      '5 年間橫跨工業系統整合、數位人文與文化機構等多種場景——從 IPC 邊緣端到雲端、從互動視覺化到全文搜尋，負責架構設計、跨系統整合與全端開發。',
+    groups: [
+      {
+        label: '太陽能板回收系統 · Edge-to-Cloud 工業整合',
+        items: [
+          '主導橫跨 15+ repositories 的系統，負責 IPC 架構設計與 edge-to-cloud 跨系統整合',
+          '串聯 SCADA、PLC（OPC UA）、5 個 IPC edge modules、YOLO AI 模型、3 個 Cloud APIs 與 IPFS 可驗證儲存',
+          '導入 config-driven 設計支援設備版本 1.0–2.x，減少約 75% 重複開發工作',
+          '重構設備端 log 為分級／分類／可篩選並排程上拋雲端，於 SCADA 即時監測，使除錯定位效率約提升 3x（耗時縮短約 2/3）；另建立 24 小時 RPO 雲端異地備援',
+          '支援 AI 物件辨識模型從資料準備、訓練到部署與 IPC 整合的完整流程',
+          '作為公司與設備商工程部主要技術窗口釐清跨組織需求，並深入掌握 90%+ 系統 repositories，能快速定位跨服務問題',
+        ],
+      },
+      {
+        label: '數位人文與文化機構',
+        items: [
+          '參與台灣文學館相關網站系統開發（橫跨 10+ repositories），涵蓋文學資料展示、資料視覺化、全文搜尋與後台管理',
+          '為多個學術機構打造數位人文展示平台，以 D3.js／Leaflet／時間軸／圖表呈現文史資料的多重面向，作為學者研究佐證',
+        ],
+      },
     ],
-    tags: ['Python', 'Node.js', 'React', 'OPC UA', 'SCADA', 'YOLOv8', 'PostgreSQL', 'Docker', 'IPFS'],
+    tags: ['Python', 'Node.js', 'React', 'TypeScript', 'D3.js', 'Leaflet', 'OPC UA', 'SCADA', 'YOLO', 'PostgreSQL', 'Docker', 'IPFS'],
+  },
+  {
+    id: 'freelance-rock',
+    period: '2024/10 — 至今',
+    role: 'Full-Stack Engineer（獨立接案）',
+    company: '獨立接案 / Freelance',
+    type: 'Freelance',
+    summary: '與正職並行，獨立承接並交付可實際營運的商業系統。',
+    highlights: [
+      '獨立開發代書資訊系統（Rock System）：以單一主責工程師完成需求、架構、前後端、權限與容器化部署的完整 SDLC',
+      '整合案件管理、零用金、統計報表、員工權限與系統監控於單一平台，將建檔與案件查找效率分別提升約 2 倍與 10 倍',
+      '以環境變數驅動的權限配置，讓不同客戶在同一套系統套用不同規則；並以 Docker Compose 容器化交付',
+    ],
+    tags: ['React', 'Strapi', 'PostgreSQL', 'Docker', 'TypeScript'],
   },
   {
     id: 'fse-lecturer',
@@ -51,23 +92,50 @@ const experienceZh = [
   },
 ];
 
-const experienceEn = [
+const experienceEn: ExperienceItem[] = [
   {
     id: 'senior-fse',
     period: '2020/10 — Present',
     role: 'Senior Full-Stack Engineer',
-    company: 'Industrial System Integration Project',
+    company: 'Industrial Integration · Digital Humanities · Cultural Institutions',
     type: 'Full-time',
-    highlights: [
-      'Led solar panel recycling system spanning 15+ repositories, responsible for IPC architecture and edge-to-cloud cross-system integration',
-      'Connected SCADA, PLC (OPC UA), 5 IPC edge modules, YOLOv8 AI, 3 Cloud APIs, and IPFS verifiable storage',
-      'Config-driven design for device versions 1.0–2.x, reducing redundant development by ~75%',
-      'Offline backup and scheduled sync mechanisms, data sync within 24h, troubleshooting time reduced ~50%',
-      'Mastered 90%+ of system repositories for rapid cross-service diagnosis',
-      'Primary technical interface between company and equipment manufacturer in weekly meetings',
-      'Supported AI object recognition from data preparation, training, deployment through IPC integration',
+    summary:
+      'Across five years spanning industrial system integration, digital humanities, and cultural institutions — from IPC edge to cloud, from interactive visualisation to full-text search — owning architecture, cross-system integration, and full-stack development.',
+    groups: [
+      {
+        label: 'Solar Panel Recycling System · Edge-to-Cloud Integration',
+        items: [
+          'Led the system across 15+ repositories — IPC architecture and edge-to-cloud cross-system integration',
+          'Connected SCADA, PLC (OPC UA), 5 IPC edge modules, YOLO AI, 3 Cloud APIs, and IPFS verifiable storage',
+          'Config-driven design for device versions 1.0–2.x, reducing redundant development by ~75%',
+          'Rebuilt edge logging (levels/categories, scheduled cloud upload, real-time SCADA monitoring), improving debug localisation efficiency ~3x (≈⅔ less time); off-site cloud DR within 24h RPO',
+          'Supported AI object recognition end-to-end — data preparation, training, deployment — and its IPC integration',
+          'Primary technical liaison with the equipment manufacturer; mastered 90%+ of system repositories for rapid cross-service diagnosis',
+        ],
+      },
+      {
+        label: 'Digital Humanities & Cultural Institutions',
+        items: [
+          'Contributed to the National Museum of Taiwan Literature web systems (spanning 10+ repositories): literary-data display, visualisation, full-text search, and back-office management',
+          'Built digital-humanities showcase platforms for multiple academic institutions, presenting historical data via D3.js / Leaflet / timelines / charts as scholarly evidence',
+        ],
+      },
     ],
-    tags: ['Python', 'Node.js', 'React', 'OPC UA', 'SCADA', 'YOLOv8', 'PostgreSQL', 'Docker', 'IPFS'],
+    tags: ['Python', 'Node.js', 'React', 'TypeScript', 'D3.js', 'Leaflet', 'OPC UA', 'SCADA', 'YOLO', 'PostgreSQL', 'Docker', 'IPFS'],
+  },
+  {
+    id: 'freelance-rock',
+    period: '2024/10 — Present',
+    role: 'Freelance Full-Stack Engineer',
+    company: 'Independent / Freelance',
+    type: 'Freelance',
+    summary: 'Alongside my full-time role, independently delivering production-ready commercial systems.',
+    highlights: [
+      'Independently built the Rock System (notary information platform): sole engineer across the full SDLC — requirements, architecture, frontend/backend, permissions, and containerised deployment',
+      'Unified case management, petty cash, statistical reports, staff permissions, and system monitoring into one platform; case filing ~2x faster and lookups ~10x faster',
+      'Env-driven permission configuration lets different clients apply different rules on one core system; delivered via Docker Compose',
+    ],
+    tags: ['React', 'Strapi', 'PostgreSQL', 'Docker', 'TypeScript'],
   },
   {
     id: 'fse-lecturer',
@@ -138,15 +206,40 @@ function ExperienceContent({ locale }: { locale: string }) {
                 <h2 className="font-heading font-semibold text-xl sm:text-2xl text-[var(--fg)] mb-1">
                   {item.role}
                 </h2>
-                <p className="text-xs font-mono text-[var(--fg-muted)] mb-5">{item.company}</p>
-                <ul className="space-y-2.5 mb-5">
-                  {item.highlights.map((h, j) => (
-                    <li key={j} className="flex gap-2 text-sm text-[var(--fg-muted)] leading-relaxed">
-                      <span className="text-[var(--accent)] flex-shrink-0 font-mono text-xs mt-1">✓</span>
-                      {h}
-                    </li>
-                  ))}
-                </ul>
+                <p className="text-xs font-mono text-[var(--fg-muted)] mb-3">{item.company}</p>
+                {item.summary && (
+                  <p className="text-sm text-[var(--fg)] leading-relaxed mb-4 border-l-2 border-[var(--accent)] pl-3">
+                    {item.summary}
+                  </p>
+                )}
+                {item.groups ? (
+                  <div className="space-y-5 mb-5">
+                    {item.groups.map((g) => (
+                      <div key={g.label}>
+                        <p className="text-xs font-mono font-semibold text-[var(--accent)] tracking-wide mb-2.5">
+                          {g.label}
+                        </p>
+                        <ul className="space-y-2.5">
+                          {g.items.map((h, j) => (
+                            <li key={j} className="flex gap-2 text-sm text-[var(--fg-muted)] leading-relaxed">
+                              <span className="text-[var(--accent)] flex-shrink-0 font-mono text-xs mt-1">✓</span>
+                              {h}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ul className="space-y-2.5 mb-5">
+                    {(item.highlights ?? []).map((h, j) => (
+                      <li key={j} className="flex gap-2 text-sm text-[var(--fg-muted)] leading-relaxed">
+                        <span className="text-[var(--accent)] flex-shrink-0 font-mono text-xs mt-1">✓</span>
+                        {h}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {item.tags.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {item.tags.map((tag) => (

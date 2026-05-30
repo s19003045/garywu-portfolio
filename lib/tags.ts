@@ -15,9 +15,10 @@ const TECH_TAGS = new Set<string>([
   // Languages / runtimes
   'python', 'node.js', 'node', 'typescript', 'javascript',
   // Frontend
-  'react', 'react.js', 'next.js', 'redux', 'd3.js',
+  'react', 'react.js', 'react 19', 'next.js', 'redux', 'd3.js',
   'electron', 'electron.js', 'material ui', 'tailwind css',
   'webpack / vite', 'vite', 'webpack',
+  'leaflet', 'react-leaflet', 'tanstack query', 'react query', 'zod',
   // Backend / databases / headless CMS
   'express', 'mysql', 'postgresql', 'mongodb',
   'sparql (graph db)', 'sparql', 'strapi', 'firebase',
@@ -25,9 +26,10 @@ const TECH_TAGS = new Set<string>([
   'refine', 'refine.dev',
   // Industrial / protocols
   'opc ua', 'opc ua / plc', 'plc', 'scada', 'ipc', 'modbus',
-  // AI / computer vision
+  // AI / computer vision / LLM
   'yolov8', 'yolov11', 'yolov8 / v11', 'yolov8 / yolov11',
   'opencv', 'openai api', 'google vision ai', 'ai agent',
+  'llm', 'rag', 'chatbot', 'line api', 'github api',
   // Infra / devops
   'docker', 'nginx', 'pm2', 'linux', 'alpine linux', 'git', 'github',
   // Web3 / storage

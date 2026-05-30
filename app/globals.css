@@ -162,6 +162,52 @@ body {
   body { background-image: none; } /* remove dot-grid animation cost */
 }
 
+/* ─── Print (Resume → PDF) ───────────────────────────────── */
+
+@media print {
+  /* Hide site chrome and any non-print controls */
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+  }
+
+  main {
+    padding-top: 0 !important;
+  }
+
+  /* Each résumé sheet prints as its own page; strip on-screen framing */
+  .resume-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    border-radius: 0 !important;
+  }
+
+  /* Force the second sheet onto a new page */
+  .resume-break {
+    break-before: page;
+  }
+
+  .resume-stage {
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
+
 /* ─── Scrollbar (dark) ───────────────────────────────────── */
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }

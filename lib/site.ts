@@ -19,6 +19,10 @@ export const siteConfig = {
   email: 's19003045@gmail.com',
   locales: ['zh', 'en'] as const,
   defaultLocale: 'zh' as const,
+  features: {
+    /** Toggle the /connect contact form. Set true to re-enable sending. */
+    contactForm: false,
+  },
 } as const;
 
 export type SiteConfig = typeof siteConfig;

@@ -14,6 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: '/experience', freq: 'monthly' as ChangeFreq, priority: 0.8 },
     { path: '/case-studies', freq: 'monthly' as ChangeFreq, priority: 0.9 },
     { path: '/projects', freq: 'monthly' as ChangeFreq, priority: 0.8 },
+    { path: '/lab', freq: 'monthly' as ChangeFreq, priority: 0.7 },
     { path: '/blog', freq: 'weekly' as ChangeFreq, priority: 0.8 },
     { path: '/resume', freq: 'monthly' as ChangeFreq, priority: 0.7 },
     { path: '/connect', freq: 'monthly' as ChangeFreq, priority: 0.7 },

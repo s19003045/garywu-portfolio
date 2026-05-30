@@ -6,7 +6,7 @@ order: 1
 description: "From IPC core program design and PLC communication to SCADA data flows, Cloud API integration, and IPFS verifiable storage — a complete industrial digital system spanning 15+ repositories."
 tags: ["Edge-to-Cloud", "IPC", "SCADA", "PLC", "System Integration", "Industrial Systems", "Industrial System Integration Architect", "Cross-System Architecture"]
 challenge: "How do you build a maintainable, long-term-evolvable cross-system integration architecture in a complex environment with unstable industrial networking, resource-constrained IPC devices, and multiple concurrent device versions?"
-outcome: "Reduced on-site troubleshooting time by ~50%, reduced redundant development work by ~75%, and enabled device versions 1.0 through 2.x to share a single IPC core program architecture."
+outcome: "Rebuilt edge-device logging into a levelled, categorised, filterable cloud-observable system — improving debug localisation efficiency by ~3x (roughly two-thirds less time); reduced redundant development ~75% via config-driven architecture; and established off-site cloud DR within a 24h RPO."
 ---
 
 ## Project Background
@@ -30,7 +30,7 @@ The following systems needed to operate in coordination:
 - 5 IPC edge modules
 - PLC communication (OPC UA)
 - SCADA monitoring system
-- AI object recognition model (YOLOv8)
+- AI object recognition model (YOLOv11)
 - 3 Cloud APIs
 - IPFS verifiable file storage
 - Order management system
@@ -63,16 +63,22 @@ Device 2.x ───────────────────────
 
 This concentrated version differences in configuration management rather than program logic, **reducing redundant development work by approximately 75%**.
 
-### Data Reliability Mechanisms
+### Observability: Log System Overhaul, 3x Faster Troubleshooting
 
-For unstable field network conditions, I designed a multi-layer data protection mechanism:
+Early on, device logs mostly stayed on the local IPC. To debug, an engineer had to remote into the device and dig through logs — but with no proper interface or categorisation, the logs existed yet were extremely noisy, and pinpointing a problem routinely took tens of minutes, sometimes far longer.
 
-- **Local logging**: All critical operations continuously recorded
-- **Offline backup**: No data loss when network is interrupted
-- **Scheduled upload**: Automatic sync when connection is restored
-- **Data cleanup**: Prevents edge storage exhaustion
+I overhauled the entire logging mechanism:
 
-Target: critical data backup and sync completed within **24 hours**; on-site troubleshooting time reduced by approximately **50%**.
+- **Levels**: classified logs into `info` / `warn` / `error` / `fatal`
+- **Categories & events**: tagged by category and event so logs became structured and queryable
+- **Scheduled cloud upload**: logs pushed up regularly so engineers could monitor in real time on SCADA — no more remote-logging into devices to search
+- **Filter-based localisation**: filter by level, category, event, and time to quickly narrow scope, then analyse root cause
+
+Result: localisation time varies with problem complexity, but overall lookup-and-localisation **efficiency improved by ~3x (roughly two-thirds less time)**. For example, a lookup that once took ~60 minutes could drop to under 20. This is what makes an "integrated system" genuinely maintainable: you can only stop the bleeding fast if you can observe it.
+
+### Data Resilience: Off-site Cloud Backup of the IPC Database
+
+For unstable field networks and constrained edge resources, I designed a scheduled backup mechanism: periodically backing up the IPC database to the cloud for **off-site disaster recovery (DR)**, keeping the recovery point objective (RPO) within **24 hours** so critical data stays recoverable even if a device or site fails.
 
 ### Cross-Company Technical Collaboration
 
@@ -86,9 +92,9 @@ As the primary technical interface between the company and the equipment manufac
 
 | Metric | Result |
 |--------|--------|
-| On-site troubleshooting time | Reduced ~50% |
+| Debug localisation efficiency | ~3x improvement (≈⅔ less time) |
 | Redundant development work | Reduced ~75% |
-| Data sync target | Completed within 24 hours |
+| Off-site cloud DR | Within 24h RPO |
 | System knowledge coverage | 90%+ of repositories |
 | Version support | 1.0 to 2.x sharing one architecture |
 
@@ -98,7 +104,7 @@ As the primary technical interface between the company and the equipment manufac
 
 **Cloud Integration**: REST APIs, IPFS
 
-**Data Management**: PostgreSQL, scheduled tasks, local backup mechanisms
+**Observability & Data**: PostgreSQL, levelled logging, scheduled cloud upload, real-time SCADA monitoring, off-site cloud DR
 
 **Collaboration**: Git, multi-repository management
 

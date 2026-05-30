@@ -24,7 +24,7 @@ export default async function ConnectPage() {
 
 function ConnectContent() {
   const t = useTranslations('connect');
-  const token = mintToken();
+  const formEnabled = siteConfig.features.contactForm;
 
   return (
     <>
@@ -37,7 +37,21 @@ function ConnectContent() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 max-w-4xl">
-        <ConnectForm token={token} />
+        {formEnabled ? (
+          <ConnectForm token={mintToken()} />
+        ) : (
+          <div className="bg-[var(--bg-subtle)] border border-[var(--border)] rounded-lg p-8 flex flex-col gap-3 self-start">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--accent-2)]" aria-hidden="true" />
+              <h2 className="font-heading font-semibold text-base text-[var(--fg)]">
+                {t('form_closed_title')}
+              </h2>
+            </div>
+            <p className="text-sm text-[var(--fg-muted)] leading-relaxed">
+              {t('form_closed_desc')}
+            </p>
+          </div>
+        )}
 
         <div className="space-y-5">
           <p className="text-xs font-mono text-[var(--fg-muted)]">// {t('or')}</p>

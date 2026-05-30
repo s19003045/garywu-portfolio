@@ -21,7 +21,7 @@ export async function generateMetadata({
 
 const stats = [
   { value: '15+', labelKey: 'stats_repos', accent: 'cyan' },
-  { value: '↓50%', labelKey: 'stats_downtime', accent: 'amber' },
+  { value: '3x', labelKey: 'stats_downtime', accent: 'amber' },
   { value: '↓75%', labelKey: 'stats_redundancy', accent: 'amber' },
   { value: '24h', labelKey: 'stats_sync', accent: 'cyan' },
 ] as const;
@@ -124,15 +124,15 @@ function FeaturedWork({ locale }: { locale: string }) {
         slug: 'solar-panel-recycling-system',
         eyebrow: 'Industrial System Integration',
         title: '太陽能板回收系統',
-        description: '橫跨 15+ repositories 的 edge-to-cloud 工業整合架構，串聯 IPC、PLC、SCADA、AI 模型（YOLOv8）與雲端 API——從設備端到雲端業務的完整資料閉環。',
-        tags: ['Edge-to-Cloud', 'IPC', 'SCADA', 'OPC UA', 'YOLOv8', 'Python'],
+        description: '橫跨 15+ repositories 的 edge-to-cloud 工業整合架構，串聯 IPC、PLC、SCADA、YOLO AI 模型與雲端 API——從設備端到雲端業務的完整資料閉環。',
+        tags: ['Edge-to-Cloud', 'IPC', 'SCADA', 'OPC UA', 'YOLO', 'Python'],
       }
     : {
         slug: 'solar-panel-recycling-system',
         eyebrow: 'Industrial System Integration',
         title: 'Solar Panel Recycling System',
-        description: 'An edge-to-cloud industrial integration spanning 15+ repositories — connecting IPC, PLC, SCADA, YOLOv8 AI, and cloud APIs into a complete data loop from device floor to business cloud.',
-        tags: ['Edge-to-Cloud', 'IPC', 'SCADA', 'OPC UA', 'YOLOv8', 'Python'],
+        description: 'An edge-to-cloud industrial integration spanning 15+ repositories — connecting IPC, PLC, SCADA, YOLO AI, and cloud APIs into a complete data loop from device floor to business cloud.',
+        tags: ['Edge-to-Cloud', 'IPC', 'SCADA', 'OPC UA', 'YOLO', 'Python'],
       };
 
   return (

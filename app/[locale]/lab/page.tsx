@@ -1,0 +1,155 @@
+import { getTranslations } from 'next-intl/server';
+import { useTranslations } from 'next-intl';
+import { Tag } from '@/components/ui/Tag';
+import type { Metadata } from 'next';
+
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: 'lab' });
+  return { title: t('eyebrow'), description: t('intro') };
+}
+
+type Status = 'live' | 'planning' | 'poc';
+
+interface SideProject {
+  id: string;
+  status: Status;
+  title: string;
+  description: string;
+  tags: string[];
+  url?: string;
+  repo?: string;
+}
+
+const projectsZh: SideProject[] = [
+  {
+    id: 'battle-viz',
+    status: 'live',
+    title: 'Battle Visualizer — 互動式歷史戰役視覺化',
+    description:
+      '一個將歷史戰役以「地圖 + 時間軸」重現的互動式播映平台：支援戰役列表、Leaflet 地圖層、時間軸播放與事件標記，把抽象的戰史轉化為可探索的教育體驗。戰役資料以 GeoJSON 儲存並透過 Zod schema 驗證。目前為 React MVP。',
+    tags: ['React 19', 'TypeScript', 'Vite', 'Leaflet', 'TanStack Query', 'Tailwind CSS', 'Zod'],
+    url: 'https://battle.deepwaterslife.com/',
+  },
+  {
+    id: 'line-rag-bot',
+    status: 'planning',
+    title: 'LINE 客服 AI 機器人 × RAG × GitHub Issue 自動化',
+    description:
+      '用於客戶 LINE 群組的 AI 客服機器人：結合 RAG（檢索公司內部與專案知識）與 LLM 即時回覆。當客戶反映符合條件的問題（如系統異常）時，自動建立 GitHub Issue 列入追蹤，交由 RD 團隊接手；RD 更可透過 AI Agent 追蹤 issue，並基於對專案的理解快速提出解法參考。',
+    tags: ['LLM', 'RAG', 'Chatbot', 'LINE API', 'GitHub API', 'AI Agent'],
+  },
+];
+
+const projectsEn: SideProject[] = [
+  {
+    id: 'battle-viz',
+    status: 'live',
+    title: 'Battle Visualizer — Interactive Historical Battle Visualization',
+    description:
+      'An interactive playback platform that replays historical battles on maps and timelines: battle lists, Leaflet map layers, timeline playback, and event markers — turning abstract military history into an explorable educational experience. Battle data is stored as GeoJSON and validated via Zod schemas. Currently a React MVP.',
+    tags: ['React 19', 'TypeScript', 'Vite', 'Leaflet', 'TanStack Query', 'Tailwind CSS', 'Zod'],
+    url: 'https://battle.deepwaterslife.com/',
+  },
+  {
+    id: 'line-rag-bot',
+    status: 'planning',
+    title: 'LINE Customer-Support AI Bot × RAG × GitHub Issue Automation',
+    description:
+      'An AI support bot for client LINE groups: combining RAG (retrieving internal company & project knowledge) with an LLM for real-time replies. When a client reports a qualifying issue (e.g. a system anomaly), it auto-creates a GitHub Issue for tracking and hands off to the RD team — who can further use an AI agent to track the issue and propose solutions quickly based on project understanding.',
+    tags: ['LLM', 'RAG', 'Chatbot', 'LINE API', 'GitHub API', 'AI Agent'],
+  },
+];
+
+export default async function LabPage({ params }: { params: Promise<{ locale: string }> }) {
+  const { locale } = await params;
+  return (
+    <div className="max-w-6xl mx-auto px-6 py-20">
+      <LabContent locale={locale} />
+    </div>
+  );
+}
+
+function LabContent({ locale }: { locale: string }) {
+  const t = useTranslations('lab');
+  const projects = locale === 'zh' ? projectsZh : projectsEn;
+
+  const statusLabel: Record<Status, string> = {
+    live: t('status_live'),
+    planning: t('status_planning'),
+    poc: t('status_poc'),
+  };
+
+  return (
+    <>
+      <div className="mb-12 max-w-2xl">
+        <p className="eyebrow mb-6">{t('eyebrow')}</p>
+        <h1 className="font-heading font-semibold text-4xl sm:text-5xl text-[var(--fg)] leading-tight mb-6">
+          {t('headline')}
+        </h1>
+        <p className="text-sm text-[var(--fg-muted)] leading-relaxed">{t('intro')}</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {projects.map((p) => (
+          <div
+            key={p.id}
+            className="group bg-[var(--bg-subtle)] border border-[var(--border)] rounded-lg p-6 flex flex-col hover:border-[var(--accent)] transition-all duration-300"
+          >
+            <div className="mb-3">
+              <StatusBadge status={p.status} label={statusLabel[p.status]} />
+            </div>
+            <h2 className="font-heading font-semibold text-base text-[var(--fg)] mb-2">{p.title}</h2>
+            <p className="text-xs text-[var(--fg-muted)] leading-relaxed mb-4 flex-1">{p.description}</p>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {p.tags.map((tag) => (
+                <Tag key={tag} label={tag} />
+              ))}
+            </div>
+            <div className="flex items-center gap-4 mt-auto">
+              {p.url && (
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-mono text-[var(--accent)] hover:underline underline-offset-4"
+                >
+                  {t('visit')} ↗
+                </a>
+              )}
+              {p.repo && (
+                <a
+                  href={p.repo}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-mono text-[var(--fg-muted)] hover:text-[var(--accent)] transition-colors"
+                >
+                  {t('view_repo')} ↗
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-10 py-6 border-t border-[var(--border)]">
+        <p className="text-xs font-mono text-[var(--fg-subtle)]">// {t('coming_soon')}</p>
+      </div>
+    </>
+  );
+}
+
+function StatusBadge({ status, label }: { status: Status; label: string }) {
+  const styles: Record<Status, { dot: string; text: string }> = {
+    live: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
+    planning: { dot: 'bg-[var(--accent-2)]', text: 'text-[var(--accent-2)]' },
+    poc: { dot: 'bg-[var(--accent)]', text: 'text-[var(--accent)]' },
+  };
+  const s = styles[status];
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[0.65rem] font-mono tracking-widest uppercase">
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot} ${status === 'live' ? 'animate-pulse' : ''}`} aria-hidden="true" />
+      <span className={s.text}>{label}</span>
+    </span>
+  );
+}

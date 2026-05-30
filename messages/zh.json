@@ -2,24 +2,25 @@
   "nav": {
     "home": "首頁",
     "about": "關於我",
-    "experience": "工作經歷",
-    "caseStudies": "案例分析",
-    "projects": "作品集",
-    "blog": "文章",
+    "experience": "專業經歷",
+    "caseStudies": "案例研究",
+    "projects": "Projects",
+    "lab": "Lab",
+    "blog": "技術文章",
     "resume": "履歷",
     "connect": "聯絡我"
   },
   "home": {
-    "eyebrow": "Senior Full-Stack Engineer",
-    "headline_1": "AI × 工業系統",
-    "headline_2": "讓複雜變成優勢",
-    "subheadline": "運用 AI 與現代技術，我在工業現場、邊緣端與雲端之間建立可維護、可演進的數位系統——讓複雜流程變得可追蹤、可管理、可強韌。",
+    "eyebrow": "Senior Full-Stack Engineer · Industrial System Integration",
+    "headline_1": "在工業現場與雲端之間",
+    "headline_2": "打造可維護的整合系統",
+    "subheadline": "我專注於工業系統整合、Edge-to-Cloud 架構與全端應用開發，將設備資料、作業流程與雲端服務串接成可維護、可追蹤、可長期演進的軟體系統。",
     "cta_primary": "查看案例",
     "cta_secondary": "下載履歷",
     "stats_repos": "repositories 整合",
-    "stats_downtime": "現場排查時間",
+    "stats_downtime": "查詢效率提升",
     "stats_redundancy": "重複開發削減",
-    "stats_sync": "資料同步目標",
+    "stats_sync": "異地備援週期",
     "featured_label": "代表案例",
     "writing_label": "最新文章",
     "skills_label": "技術能力"
@@ -37,7 +38,8 @@
     "ai_tools": "AI & Dev Efficiency",
     "security": "Security & Compliance",
     "testimonials_eyebrow": "Peer Feedback",
-    "testimonials_heading": "共事夥伴怎麼說"
+    "testimonials_heading": "共事夥伴怎麼說",
+    "meta_description": "吳振銜（Gary Wu）是專注工業系統整合與 Edge-to-Cloud 架構的資深全端工程師，5+ 年實戰，串接 IPC、SCADA、AI 與雲端，打造可維護、可演進的軟體系統。"
   },
   "experience": {
     "eyebrow": "Experience",
@@ -55,6 +57,17 @@
     "view_project": "查看專案",
     "coming_soon": "更多作品整理中"
   },
+  "lab": {
+    "eyebrow": "Lab",
+    "headline": "自主開發的實驗與作品",
+    "intro": "這裡收錄我自己發起的 side projects——從 POC、創意 idea 的技術整合，到展現技術能力的應用程式。它們不一定有客戶，更多是出於好奇與實驗精神。",
+    "status_live": "已上線",
+    "status_planning": "規劃中",
+    "status_poc": "POC",
+    "visit": "前往網站",
+    "view_repo": "查看原始碼",
+    "coming_soon": "更多實驗持續進行中"
+  },
   "blog": {
     "eyebrow": "Writing",
     "headline": "工程思考與觀察",
@@ -65,6 +78,7 @@
     "eyebrow": "Resume",
     "headline": "完整工作背景",
     "download": "下載 PDF 履歷",
+    "print_button": "或用瀏覽器列印",
     "coming_soon": "PDF 履歷準備中，敬請期待。",
     "contact_cta": "如需立即了解更多，歡迎直接聯絡我。"
   },
@@ -80,7 +94,9 @@
     "message_placeholder": "告訴我你的專案或想法...",
     "send": "傳送訊息",
     "linkedin": "LinkedIn",
-    "or": "或透過社群聯絡"
+    "or": "或透過社群聯絡",
+    "form_closed_title": "線上表單暫時關閉",
+    "form_closed_desc": "目前線上傳送訊息功能暫停中。歡迎直接透過以下任一管道與我聯絡，我會盡快回覆。"
   },
   "footer": {
     "built_with": "Built with Next.js",

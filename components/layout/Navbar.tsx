@@ -11,6 +11,7 @@ const navItems = [
   { key: 'experience', href: '/experience' },
   { key: 'caseStudies', href: '/case-studies' },
   { key: 'projects', href: '/projects' },
+  { key: 'lab', href: '/lab' },
   { key: 'blog', href: '/blog' },
   { key: 'resume', href: '/resume' },
   { key: 'connect', href: '/connect' },
