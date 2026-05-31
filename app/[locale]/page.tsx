@@ -21,9 +21,9 @@ export async function generateMetadata({
 
 const stats = [
   { value: '15+', labelKey: 'stats_repos', accent: 'cyan' },
-  { value: '3x', labelKey: 'stats_downtime', accent: 'amber' },
-  { value: '↓75%', labelKey: 'stats_redundancy', accent: 'amber' },
-  { value: '24h', labelKey: 'stats_sync', accent: 'cyan' },
+  { value: '3x', labelKey: 'stats_debug', accent: 'amber' },
+  { value: '100%', labelKey: 'stats_sync', accent: 'cyan' },
+  { value: '4x', labelKey: 'stats_deploy', accent: 'amber' },
 ] as const;
 
 const techBrief = {

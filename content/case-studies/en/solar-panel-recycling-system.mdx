@@ -63,18 +63,41 @@ Device 2.x ───────────────────────
 
 This concentrated version differences in configuration management rather than program logic, **reducing redundant development work by approximately 75%**.
 
+### Deployment Efficiency: An IPC Software Version Manager
+
+Installing the core program, multiple edge modules, and AI models by hand — device by device, item by item — was slow and error-prone across versions and dependencies. I introduced an IPC software version manager that turned deployment into a controlled, repeatable process: per-device deployment dropped from roughly **1 hour to 15 minutes**, while sharply cutting the risk of manual installation errors across the core program, modules, and AI models. On a floor running multiple versions across multiple sites, every update became both faster and more reliable.
+
+### End-to-End Traceability: 21 Process Timestamps per Panel
+
+The recycling flow spans **7 key stations**, and the system records **21 process timestamps** for every panel — plus a process record at each station — capturing each panel's full journey from intake to completed recycling. All recycling data and system logs sync to the cloud and are **retained for at least 5 years**, so any panel and any process step can be precisely traced and analysed after the fact.
+
+This traceability rests on monitoring at multiple levels of granularity:
+
+- **Plant level**: SCADA monitors overall line status in real time
+- **Device level**: tracks each device's recycling throughput and operating status
+- **Station level**: process records for each of the 7 key stations
+- **Panel level**: full traceability via 21 timestamps per panel
+
+From coarse to fine, both the floor and the cloud can grasp production state at the right granularity.
+
 ### Observability: Log System Overhaul, 3x Faster Troubleshooting
 
 Early on, device logs mostly stayed on the local IPC. To debug, an engineer had to remote into the device and dig through logs — but with no proper interface or categorisation, the logs existed yet were extremely noisy, and pinpointing a problem routinely took tens of minutes, sometimes far longer.
 
 I overhauled the entire logging mechanism:
 
-- **Levels**: classified logs into `info` / `warn` / `error` / `fatal`
+- **Levels**: classified logs into 6 severity levels, from routine info to fatal errors
 - **Categories & events**: tagged by category and event so logs became structured and queryable
 - **Scheduled cloud upload**: logs pushed up regularly so engineers could monitor in real time on SCADA — no more remote-logging into devices to search
 - **Filter-based localisation**: filter by level, category, event, and time to quickly narrow scope, then analyse root cause
 
+The structured logging spans **764 log call sites across 6 levels, 61 module categories, and 52 event categories** — covering API requests and responses, scheduled tasks, OPC communication, device reads/writes, connection status, storage flows, data upload and resend, permission checks, and alert notifications. Almost every critical path leaves a traceable trail, sharply improving on-site problem localisation.
+
 Result: localisation time varies with problem complexity, but overall lookup-and-localisation **efficiency improved by ~3x (roughly two-thirds less time)**. For example, a lookup that once took ~60 minutes could drop to under 20. This is what makes an "integrated system" genuinely maintainable: you can only stop the bleeding fast if you can observe it.
+
+### Edge-to-Cloud Data Sync: 100% Eventual Success, 99.9% Availability
+
+Every device produces a large volume of recycling records and timestamps each day, and all of it has to reach the cloud reliably. My Edge-to-Cloud sync mechanism runs on two tracks — **real-time upload plus scheduled retry on failure**: it syncs immediately under normal conditions, and when the site loses connectivity or the cloud is momentarily unavailable, data enters a scheduled queue and keeps retrying until it lands. This achieves a **100% eventual data-sync success rate** even on unstable factory networks, meeting a **99.9% system availability** requirement.
 
 ### Data Resilience: Off-site Cloud Backup of the IPC Database
 
@@ -92,6 +115,11 @@ As the primary technical interface between the company and the equipment manufac
 
 | Metric | Result |
 |--------|--------|
+| IPC software deployment | ~1 hour → 15 minutes |
+| Data-sync success rate | 100% eventual |
+| System availability | 99.9% |
+| Traceability granularity | 7 stations · 21 timestamps/panel |
+| Structured logging | 764 call sites / 6 levels / 61 modules / 52 events |
 | Debug localisation efficiency | ~3x improvement (≈⅔ less time) |
 | Redundant development work | Reduced ~75% |
 | Off-site cloud DR | Within 24h RPO |

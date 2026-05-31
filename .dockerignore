@@ -1,0 +1,30 @@
+# Dependencies & build artifacts (reinstalled / rebuilt inside the image)
+node_modules
+.next
+.next-rm
+out
+build
+coverage
+
+# Git & tooling
+.git
+.gitignore
+.dockerignore
+.vscode
+.idea
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+
+# Secrets — never bake env into image layers (pass at runtime via compose)
+.env
+.env.*
+
+# Logs & misc
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+*.pem

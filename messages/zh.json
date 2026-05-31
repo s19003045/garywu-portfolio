@@ -18,9 +18,9 @@
     "cta_primary": "查看案例",
     "cta_secondary": "下載履歷",
     "stats_repos": "repositories 整合",
-    "stats_downtime": "查詢效率提升",
-    "stats_redundancy": "重複開發削減",
-    "stats_sync": "異地備援週期",
+    "stats_debug": "除錯定位效率",
+    "stats_sync": "資料同步成功率",
+    "stats_deploy": "部署效率提升",
     "featured_label": "代表案例",
     "writing_label": "最新文章",
     "skills_label": "技術能力"

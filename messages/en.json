@@ -18,9 +18,9 @@
     "cta_primary": "View Case Studies",
     "cta_secondary": "Download Resume",
     "stats_repos": "repositories integrated",
-    "stats_downtime": "query efficiency",
-    "stats_redundancy": "dev redundancy cut",
-    "stats_sync": "off-site DR cycle",
+    "stats_debug": "faster debug localisation",
+    "stats_sync": "data-sync success",
+    "stats_deploy": "faster deployment",
     "featured_label": "Featured Case",
     "writing_label": "Latest Writing",
     "skills_label": "Technical Skills"

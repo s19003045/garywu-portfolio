@@ -24,6 +24,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Emit a minimal, self-contained server (.next/standalone) for Docker.
+  // Does not affect `npm run build` / `next start`; it's an additional output.
+  output: 'standalone',
   async headers() {
     return [
       {

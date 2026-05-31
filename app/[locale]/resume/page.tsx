@@ -26,9 +26,9 @@ const data = {
     hint: '提示：在列印對話框選擇「另存為 PDF」，並關閉「頁首及頁尾」以獲得最佳效果。',
     highlights: [
       { v: '15+', l: 'repositories 整合', a: 'cyan' },
-      { v: '3x', l: '查詢效率提升', a: 'amber' },
-      { v: '↓75%', l: '重複開發削減', a: 'amber' },
-      { v: '24h', l: '異地備援週期', a: 'cyan' },
+      { v: '3x', l: '除錯定位效率', a: 'amber' },
+      { v: '4x', l: 'IPC 部署效率', a: 'amber' },
+      { v: '100%', l: '最終資料同步', a: 'cyan' },
       { v: '5+', l: '年資深經驗', a: 'cyan' },
     ],
     skills: [
@@ -43,17 +43,29 @@ const data = {
         role: 'Senior Full-Stack Engineer',
         period: '2020.10 – 至今',
         bullets: [
-          '主導橫跨 15+ repositories 的太陽能板回收系統，負責 IPC 架構設計與 edge-to-cloud 跨系統整合',
-          '串聯 SCADA、PLC (OPC UA)、5 個 IPC edge modules、YOLO AI 模型、3 個 Cloud APIs 與 IPFS',
-          '導入 config-driven 設計支援設備版本 1.0–2.x，減少約 75% 重複開發工作',
-          '重構設備端 log（分級／分類／事件 + 排程上拋雲端 + SCADA 篩選），使除錯定位效率約提升 3x（耗時縮短約 2/3）；並建立 24 小時 RPO 的雲端異地備援',
+          '主導橫跨 15+ repositories 的太陽能板回收系統，負責 IPC 主程式架構與 edge-to-cloud 跨系統整合，並深入掌握 90%+ repositories，能快速定位跨服務問題',
+          '串聯 SCADA、PLC (OPC UA)、5 個 IPC edge modules、YOLO AI 模型、3 個 Cloud APIs 與 IPFS 可驗證儲存，形成設備到雲端的完整資料閉環',
+          '導入 config-driven 設計支援設備版本 1.0–2.x，減少約 75% 重複開發；並以 version manager 將 IPC 軟體部署由 1 小時縮短至 15 分鐘',
+          '重構設備端 log 為 764 個結構化呼叫點（6 等級／61 模組／52 事件）並排程上拋雲端、於 SCADA 即時監測篩選，使除錯定位效率約提升 3x',
+          '設計即時上傳＋排程重送的 Edge-to-Cloud 同步，達成 100% 最終資料同步與 99.9% 系統可用性；另建立 24 小時 RPO 雲端異地備援',
+          '建立橫跨 7 個關鍵站點、每片板 21 個製程時間戳的全流程追溯機制，回收資料與系統日誌雲端保存至少 5 年',
+          '支援 AI 物件辨識模型從資料準備、訓練、部署到 IPC 整合的完整流程；並作為公司與設備商工程部主要技術窗口釐清跨組織需求',
+          '另參與台灣文學館相關網站（10+ repositories）及多個數位人文展示平台，以 D3.js／Leaflet／時間軸／圖表呈現文史資料',
+        ],
+      },
+      {
+        role: 'Full-Stack Engineer（獨立接案）',
+        period: '2024.10 – 至今',
+        bullets: [
+          '獨立開發代書資訊系統（Rock System）：以單一主責工程師完成需求、架構、前後端、權限與容器化部署的完整 SDLC',
+          '整合案件管理、零用金、統計報表、權限與系統監控於單一平台，建檔與案件查找效率分別提升約 2x 與 10x；以環境變數驅動權限配置支援多客戶差異化規則',
         ],
       },
       {
         role: 'Full-Stack Engineer · LINE Chatbot Developer · IT Lecturer',
         period: '2020.07 – 2020.12',
         bullets: [
-          '開發 LINE chatbot 自動化服務流程；擔任資訊技術講師；參與全端應用程式開發',
+          '開發 LINE chatbot 自動化服務流程；擔任資訊技術講師進行技術課程教學；參與全端應用程式開發',
         ],
       },
       {
@@ -91,9 +103,9 @@ const data = {
     hint: 'Tip: in the print dialog choose "Save as PDF" and turn off "Headers and footers" for the best result.',
     highlights: [
       { v: '15+', l: 'repositories integrated', a: 'cyan' },
-      { v: '3x', l: 'query efficiency', a: 'amber' },
-      { v: '↓75%', l: 'dev redundancy cut', a: 'amber' },
-      { v: '24h', l: 'off-site DR cycle', a: 'cyan' },
+      { v: '3x', l: 'debug localisation', a: 'amber' },
+      { v: '4x', l: 'faster deployment', a: 'amber' },
+      { v: '100%', l: 'eventual data sync', a: 'cyan' },
       { v: '5+', l: 'years experience', a: 'cyan' },
     ],
     skills: [
@@ -108,17 +120,29 @@ const data = {
         role: 'Senior Full-Stack Engineer',
         period: '2020.10 – Present',
         bullets: [
-          'Led the solar panel recycling system across 15+ repositories — IPC architecture design and edge-to-cloud cross-system integration',
-          'Connected SCADA, PLC (OPC UA), 5 IPC edge modules, YOLOv11 AI, 3 Cloud APIs, and IPFS',
-          'Introduced config-driven design supporting device versions 1.0–2.x, cutting redundant development by ~75%',
-          'Rebuilt edge logging (levels/categories/events + scheduled cloud upload + SCADA filtering), improving debug localisation efficiency ~3x (≈⅔ less time); established off-site cloud DR within 24h RPO',
+          'Led the solar panel recycling system across 15+ repositories — IPC core architecture and edge-to-cloud cross-system integration; mastered 90%+ of repositories for rapid cross-service diagnosis',
+          'Connected SCADA, PLC (OPC UA), 5 IPC edge modules, YOLO AI, 3 Cloud APIs, and IPFS verifiable storage into a complete device-to-cloud data loop',
+          'Introduced config-driven design for device versions 1.0–2.x, cutting redundant development ~75%; a version manager cut IPC software deployment from 1 hour to 15 minutes',
+          'Rebuilt edge logging into 764 structured call sites (6 levels / 61 modules / 52 events), scheduled to the cloud and filtered live on SCADA — improving debug localisation ~3x',
+          'Designed an Edge-to-Cloud sync (real-time upload + scheduled retry) achieving 100% eventual data-sync success and 99.9% availability; plus off-site cloud DR within 24h RPO',
+          'Built end-to-end traceability across 7 key stations with 21 process timestamps per panel; recycling data and system logs retained in the cloud for at least 5 years',
+          'Supported AI object recognition end-to-end — data preparation, training, deployment, and IPC integration; served as primary technical liaison with the equipment manufacturer',
+          'Also contributed to National Museum of Taiwan Literature web systems (10+ repositories) and several digital-humanities platforms using D3.js / Leaflet / timelines / charts',
+        ],
+      },
+      {
+        role: 'Freelance Full-Stack Engineer',
+        period: '2024.10 – Present',
+        bullets: [
+          'Built the Rock System (notary / land-administration platform) end-to-end as sole engineer — requirements, architecture, full-stack, permissions, and containerised delivery',
+          'Unified case management, petty cash, reporting, permissions, and monitoring in one platform — ~2x faster filing and ~10x faster lookups; env-driven permissions support per-client rules',
         ],
       },
       {
         role: 'Full-Stack Engineer · LINE Chatbot Developer · IT Lecturer',
         period: '2020.07 – 2020.12',
         bullets: [
-          'Built LINE chatbot automation; served as IT lecturer; participated in full-stack development',
+          'Built LINE chatbot automation; served as IT lecturer delivering technical courses; participated in full-stack development',
         ],
       },
       {
@@ -127,6 +151,7 @@ const data = {
         bullets: ['Assisted with academic research and technical support'],
       },
     ],
+
     cases: [
       { t: 'Solar Panel Recycling System — Edge-to-Cloud Industrial Integration', d: 'Spanning 15+ repositories; config-driven design cut dev redundancy ~75%, and log observability made debug localisation ~3x faster.', tags: 'Edge-to-Cloud · IPC · SCADA · OPC UA · Python' },
       { t: 'Rock System — Full-Stack Business Platform (0→1)', d: 'Sole engineer across the SDLC: fine-grained permissions, seat control, 2FA, and containerised delivery.', tags: 'React · Strapi · PostgreSQL · Docker' },
@@ -237,11 +262,15 @@ export default async function ResumePage({ params }: { params: Promise<{ locale:
             </div>
           </Section>
 
+        </article>
+
+        {/* ── PAGE 2 ── */}
+        <article className="resume-sheet resume-break w-full max-w-[820px] bg-white text-neutral-900 rounded-lg shadow-xl border border-neutral-200 p-10">
           {/* Experience */}
-          <Section label={L.experience}>
+          <Section label={L.experience} first>
             <div className="space-y-4">
               {d.experience.map((e) => (
-                <div key={e.role}>
+                <div key={e.role} className="break-inside-avoid">
                   <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-0.5 mb-1">
                     <h3 className="font-heading font-semibold text-sm text-neutral-900">{e.role}</h3>
                     <span className="font-mono text-xs text-neutral-500 flex-shrink-0">{e.period}</span>
@@ -259,13 +288,13 @@ export default async function ResumePage({ params }: { params: Promise<{ locale:
           </Section>
         </article>
 
-        {/* ── PAGE 2 ── */}
+        {/* ── PAGE 3 ── */}
         <article className="resume-sheet resume-break w-full max-w-[820px] bg-white text-neutral-900 rounded-lg shadow-xl border border-neutral-200 p-10">
           {/* Selected case studies */}
           <Section label={L.cases} first>
             <div className="space-y-4">
               {d.cases.map((c) => (
-                <div key={c.t}>
+                <div key={c.t} className="break-inside-avoid">
                   <h3 className="font-heading font-semibold text-sm text-neutral-900 mb-1">{c.t}</h3>
                   <p className="text-xs text-neutral-700 leading-relaxed mb-1">{c.d}</p>
                   <p className="text-xs font-mono text-[#0369A1]">{c.tags}</p>

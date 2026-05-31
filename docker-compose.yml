@@ -1,0 +1,54 @@
+# Docker Compose for the Gary Wu portfolio (Next.js 16, standalone output).
+#
+#   docker compose up -d --build      # build & run in the background
+#   docker compose logs -f            # follow logs
+#   docker compose down               # stop & remove
+#
+# The app serves on http://localhost:3000 — put your own reverse proxy
+# (Nginx / Caddy / Traefik) in front for TLS and the public domain.
+
+services:
+  web:
+    env_file:
+      - .env
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: garywu-portfolio:latest
+    restart: unless-stopped
+    # No container_name: it must be unique, which would block scaling.
+    # Scale replicas with:  docker compose up -d --scale web=3
+    ports:
+      # Host port(s) read from WEB_PORTS in .env (compose auto-loads .env).
+      # A host *range* (e.g. 3501-3503) lets Docker assign one port per replica
+      # when scaling; the range must be at least as large as the replica count.
+      - "${WEB_PORTS:-3051-3053}:3000"
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+    environment:
+      NODE_ENV: production
+      # PORT / HOSTNAME already default to 3000 / 0.0.0.0 in the image.
+      #
+      # Contact form (/connect) is disabled via lib/site.ts feature flag.
+      # To enable it, set features.contactForm = true and provide these
+      # (see .env.example), e.g. by uncommenting env_file below:
+      # GMAIL_CLIENT_ID: ""
+      # GMAIL_CLIENT_SECRET: ""
+      # GMAIL_REFRESH_TOKEN: ""
+      # GMAIL_SENDER: "s19003045@gmail.com"
+      # CONTACT_RECIPIENT: "s19003045@gmail.com"
+      # CONTACT_TOKEN_SECRET: ""
+    # Uncomment to load the above from a local .env file (copy .env.example):
+    # env_file:
+    #   - path: .env
+    #     required: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/zh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

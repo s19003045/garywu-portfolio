@@ -17,6 +17,30 @@ Rock System is a full-stack business system I solely planned, built, and maintai
 - **Backend** centred on Strapi v4 + TypeScript, connected to PostgreSQL — handling data models, authentication/authorisation, seat management, heartbeat sync, and business APIs.
 - **Deployment** is containerised, enabling stable delivery, updates, and maintenance within client environments.
 
+## The Firm's Real Pain Points & the Benefits Delivered
+
+This was a project I took on independently in my own time as the **sole responsible engineer**, working directly with the firm's front-line operations — so I understood their pain points first-hand. Before the system, the whole firm relied heavily on files and forms scattered everywhere; Rock System's value was consolidating those fragmented workflows into a single, collaborative, auditable platform.
+
+**Filing & lookup — consolidating scattered data into one case view**
+
+A single case's data used to be spread across multiple forms, so filing each new case took **40–60 minutes**, and digging up a historical case was like finding a needle in a haystack — often around **10 minutes**. After unifying case data into a single data model, filing became roughly **2x faster**, and case lookup dropped from 10 minutes to under **1 minute**.
+
+**Work from anywhere — no longer tied to the office**
+
+Case files could previously only be edited inside the office. Now, with just a network connection, staff can query and edit case and petty-cash data in real time even while out handling case business (e.g., at the land-administration office) — work is no longer bound to a location.
+
+**Reconciliation — making billing and petty cash line up**
+
+Case billing and petty cash were recorded in separate files, making reconciliation hard and inviting under-reported charges and mis-keyed amounts. The system **binds case charges to petty-cash spending**, enabling automatic reconciliation and markedly reducing under-reporting and data-entry errors.
+
+**Report automation — from 4 hours to 30 seconds**
+
+Monthly, quarterly, and annual reports used to be compiled by hand — a single monthly report took about **4 hours**. Now the platform pulls the analysis data straight from the database and exports in one click, completing the same monthly report in under **30 seconds**.
+
+**Permissions & petty-cash management — finer and more real-time**
+
+Case-file edit permissions went from one-size-fits-all to **per-case** configuration; petty cash moved from "request from a supervisor, then track your own spending, with no real-time visibility for the supervisor" to a platform-based application and management flow — staff manage their own spending more effectively, and supervisors can **query each employee's usage in real time**.
+
 ## Core Challenges
 
 The difficulty wasn't just building frontend and backend — it was bringing a genuinely operable commercial system from 0 to 1.
