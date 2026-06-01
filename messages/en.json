@@ -102,6 +102,12 @@
     "built_with": "Built with Next.js",
     "rights": "© 2026 Gary Wu. All rights reserved."
   },
+  "consent": {
+    "message": "This site uses Google Analytics to understand how visitors use it, helping me keep improving the content. Allow analytics cookies?",
+    "accept": "Accept",
+    "decline": "Decline",
+    "aria_label": "Cookie consent"
+  },
   "common": {
     "back": "Back",
     "loading": "Loading...",

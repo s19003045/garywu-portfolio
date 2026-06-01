@@ -3,6 +3,7 @@ import { useTranslations } from 'next-intl';
 import Image from 'next/image';
 import { Link } from '@/i18n/navigation';
 import { siteConfig } from '@/lib/site';
+import { OutboundLink } from '@/components/analytics/OutboundLink';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({
@@ -187,15 +188,15 @@ function AboutContent({ locale }: { locale: string }) {
           </div>
           <div className="flex flex-wrap gap-3">
             {socials.map((s) => (
-              <a
+              <OutboundLink
                 key={s.label}
                 href={s.href}
-                target="_blank"
-                rel="noopener noreferrer"
+                location="about"
+                label={s.label}
                 className="text-xs font-mono text-[var(--fg-muted)] hover:text-[var(--accent)] transition-colors border border-[var(--border)] px-3 py-1.5 rounded hover:border-[var(--accent)]"
               >
                 {s.label} ↗
-              </a>
+              </OutboundLink>
             ))}
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { siteConfig } from '@/lib/site';
+import { OutboundLink } from '@/components/analytics/OutboundLink';
 
 export function Footer() {
   const t = useTranslations('footer');
@@ -32,14 +33,14 @@ export function Footer() {
             {footerLinks.map((link, index) => (
               <div key={link.label} className="flex items-center gap-3">
                 {link.external ? (
-                  <a
+                  <OutboundLink
                     href={link.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    location="footer"
+                    label={link.label}
                     className="transition-colors hover:text-[var(--accent)]"
                   >
                     {link.label}
-                  </a>
+                  </OutboundLink>
                 ) : (
                   <Link href="/connect" className="transition-colors hover:text-[var(--accent)]">
                     {link.label}

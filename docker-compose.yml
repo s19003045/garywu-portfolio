@@ -14,6 +14,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # 傳進 build 階段,讓 next build 把 GA ID inline 進 client bundle。
+        # compose 會自動從專案根目錄的 .env 讀取此值(與 env_file 的 runtime 注入互補)。
+        NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
     image: garywu-portfolio:latest
     restart: unless-stopped
     # No container_name: it must be unique, which would block scaling.

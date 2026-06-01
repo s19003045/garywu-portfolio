@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import { siteConfig } from '@/lib/site';
 import { JsonLd } from '@/components/seo/JsonLd';
+import { Analytics } from '@/components/analytics/Analytics';
 import { personSchema, websiteSchema } from '@/lib/structured-data';
 import './globals.css';
 
@@ -80,6 +81,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to main content
         </a>
         {children}
+        <Analytics />
       </body>
     </html>
   );

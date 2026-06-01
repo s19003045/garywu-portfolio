@@ -20,6 +20,11 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* 變數在 `next build` 時就被寫死進 client bundle,故必須在 build
+# 階段提供。docker-compose 的 env_file 只注入 runtime(影響 server),不會進
+# client JS;少了這步會導致同意橫幅不顯示、自訂事件不送(只剩 server 端 gtag)。
+ARG NEXT_PUBLIC_GA_ID
+ENV NEXT_PUBLIC_GA_ID=${NEXT_PUBLIC_GA_ID}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # `next build` fetches Google Fonts (next/font) at build time — the build host

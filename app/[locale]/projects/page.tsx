@@ -1,6 +1,7 @@
 import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
 import { Tag } from '@/components/ui/Tag';
+import { ContentLink } from '@/components/analytics/ContentLink';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
@@ -160,9 +161,15 @@ function ProjectsContent({ locale }: { locale: string }) {
               ))}
             </div>
             {project.link && (
-              <a href={project.link} className="text-xs font-mono text-[var(--accent)] hover:underline underline-offset-4 mt-auto">
+              <ContentLink
+                href={project.link}
+                contentType="project"
+                itemId={project.id}
+                itemName={project.title}
+                className="text-xs font-mono text-[var(--accent)] hover:underline underline-offset-4 mt-auto"
+              >
                 {project.linkLabel} →
-              </a>
+              </ContentLink>
             )}
           </div>
         ))}

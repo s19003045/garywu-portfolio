@@ -5,6 +5,7 @@ import { routing } from '@/i18n/routing';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
+import { ConsentBanner } from '@/components/analytics/ConsentBanner';
 import type { Metadata } from 'next';
 
 export async function generateStaticParams() {
@@ -43,6 +44,7 @@ export default async function LocaleLayout({
         <Navbar />
         <main id="main-content" className="flex-1 pt-14">{children}</main>
         <Footer />
+        <ConsentBanner />
       </ThemeProvider>
     </NextIntlClientProvider>
   );

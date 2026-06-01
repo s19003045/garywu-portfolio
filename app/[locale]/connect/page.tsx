@@ -2,6 +2,7 @@ import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
 import { ConnectForm } from '@/components/connect/ConnectForm';
 import { siteConfig } from '@/lib/site';
+import { OutboundLink } from '@/components/analytics/OutboundLink';
 import { mintToken } from '@/lib/anti-spam';
 import type { Metadata } from 'next';
 
@@ -71,10 +72,10 @@ function ConnectContent() {
             </span>
           </a>
 
-          <a
+          <OutboundLink
             href={siteConfig.links.linkedin}
-            target="_blank"
-            rel="noopener noreferrer"
+            location="connect"
+            label="LinkedIn"
             className="flex items-center gap-3 group"
           >
             <div className="w-10 h-10 rounded bg-[var(--bg-subtle)] border border-[var(--border)] flex items-center justify-center group-hover:border-[var(--accent)] transition-colors">
@@ -87,12 +88,12 @@ function ConnectContent() {
             <span className="text-sm font-mono text-[var(--fg-muted)] group-hover:text-[var(--accent)] transition-colors">
               {t('linkedin')}
             </span>
-          </a>
+          </OutboundLink>
 
-          <a
+          <OutboundLink
             href={siteConfig.links.github}
-            target="_blank"
-            rel="noopener noreferrer"
+            location="connect"
+            label="GitHub"
             className="flex items-center gap-3 group"
           >
             <div className="w-10 h-10 rounded bg-[var(--bg-subtle)] border border-[var(--border)] flex items-center justify-center group-hover:border-[var(--accent)] transition-colors">
@@ -103,7 +104,7 @@ function ConnectContent() {
             <span className="text-sm font-mono text-[var(--fg-muted)] group-hover:text-[var(--accent)] transition-colors">
               GitHub
             </span>
-          </a>
+          </OutboundLink>
         </div>
       </div>
     </>

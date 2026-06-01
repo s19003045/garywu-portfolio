@@ -102,6 +102,12 @@
     "built_with": "Built with Next.js",
     "rights": "© 2026 Gary Wu. All rights reserved."
   },
+  "consent": {
+    "message": "本站使用 Google Analytics 了解訪客如何使用網站，協助我持續優化內容。是否同意啟用分析 cookie？",
+    "accept": "同意",
+    "decline": "拒絕",
+    "aria_label": "Cookie 同意"
+  },
   "common": {
     "back": "返回",
     "loading": "載入中...",

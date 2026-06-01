@@ -1,5 +1,6 @@
 import { getTranslations } from 'next-intl/server';
 import { PrintButton } from '@/components/resume/PrintButton';
+import { DownloadLink } from '@/components/analytics/DownloadLink';
 import { siteConfig } from '@/lib/site';
 import type { Metadata } from 'next';
 
@@ -189,16 +190,16 @@ export default async function ResumePage({ params }: { params: Promise<{ locale:
           </h1>
         </div>
         <div className="no-print flex items-center gap-3">
-          <a
+          <DownloadLink
             href={pdfHref}
-            download
+            format={locale === 'en' ? 'en' : 'zh'}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-[var(--bg)] text-sm font-heading font-semibold rounded hover:opacity-90 transition-opacity"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M7 1v8M4 6l3 3 3-3M1 10v1a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             {t('download')}
-          </a>
+          </DownloadLink>
           <PrintButton label={t('print_button')} />
         </div>
       </div>
