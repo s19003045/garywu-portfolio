@@ -4,6 +4,7 @@ import { ConnectForm } from '@/components/connect/ConnectForm';
 import { siteConfig } from '@/lib/site';
 import { OutboundLink } from '@/components/analytics/OutboundLink';
 import { mintToken } from '@/lib/anti-spam';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 // Dynamic so each visit gets a fresh anti-spam timing token.
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic';
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'connect' });
-  return { title: t('eyebrow'), description: t('description') };
+  return { title: t('eyebrow'), description: t('description'), alternates: localeAlternates(locale, '/connect') };
 }
 
 export default async function ConnectPage() {

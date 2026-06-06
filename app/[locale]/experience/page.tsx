@@ -1,12 +1,13 @@
 import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
 import { Tag } from '@/components/ui/Tag';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'experience' });
-  return { title: t('headline') };
+  return { title: t('headline'), alternates: localeAlternates(locale, '/experience') };
 }
 
 interface ExperienceItem {

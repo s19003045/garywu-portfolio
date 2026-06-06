@@ -2,12 +2,13 @@ import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
 import { Tag } from '@/components/ui/Tag';
 import { ContentLink } from '@/components/analytics/ContentLink';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'lab' });
-  return { title: t('eyebrow'), description: t('intro') };
+  return { title: t('eyebrow'), description: t('intro'), alternates: localeAlternates(locale, '/lab') };
 }
 
 type Status = 'live' | 'planning' | 'poc';

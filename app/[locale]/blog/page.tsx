@@ -4,12 +4,13 @@ import { Link } from '@/i18n/navigation';
 import { getAllPosts } from '@/lib/mdx';
 import { formatDate } from '@/lib/utils';
 import { Tag } from '@/components/ui/Tag';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'blog' });
-  return { title: t('eyebrow'), description: t('headline') };
+  return { title: t('eyebrow'), description: t('headline'), alternates: localeAlternates(locale, '/blog') };
 }
 
 export default async function BlogPage({ params }: { params: Promise<{ locale: string }> }) {

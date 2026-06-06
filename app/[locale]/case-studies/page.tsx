@@ -3,12 +3,13 @@ import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { getAllCaseStudies } from '@/lib/mdx';
 import { Tag } from '@/components/ui/Tag';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'caseStudies' });
-  return { title: t('eyebrow'), description: t('headline') };
+  return { title: t('eyebrow'), description: t('headline'), alternates: localeAlternates(locale, '/case-studies') };
 }
 
 export default async function CaseStudiesPage({ params }: { params: Promise<{ locale: string }> }) {

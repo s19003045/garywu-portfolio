@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { Link } from '@/i18n/navigation';
 import { siteConfig } from '@/lib/site';
 import { OutboundLink } from '@/components/analytics/OutboundLink';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({
@@ -13,7 +14,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'about' });
-  return { title: t('eyebrow'), description: t('meta_description') };
+  return { title: t('eyebrow'), description: t('meta_description'), alternates: localeAlternates(locale, '/about') };
 }
 
 const skills = {

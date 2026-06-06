@@ -4,6 +4,7 @@ import { Link } from '@/i18n/navigation';
 import { getAllPosts } from '@/lib/mdx';
 import { formatDate } from '@/lib/utils';
 import { Tag } from '@/components/ui/Tag';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({
@@ -16,6 +17,7 @@ export async function generateMetadata({
   return {
     title: 'Gary Wu — Senior Full-Stack Engineer',
     description: t('subheadline'),
+    alternates: localeAlternates(locale),
   };
 }
 

@@ -51,6 +51,7 @@ export function articleSchema(opts: {
   locale: string;
   slug: string;
   tags: string[];
+  image?: string;
 }) {
   const url = `${siteConfig.url}/${opts.locale}/blog/${opts.slug}`;
   return {
@@ -58,6 +59,7 @@ export function articleSchema(opts: {
     '@type': 'BlogPosting',
     headline: opts.title,
     description: opts.description,
+    ...(opts.image ? { image: opts.image } : {}),
     datePublished: opts.date,
     dateModified: opts.date,
     inLanguage: opts.locale === 'zh' ? 'zh-TW' : 'en',
@@ -85,6 +87,7 @@ export function caseStudySchema(opts: {
   locale: string;
   slug: string;
   tags: string[];
+  image?: string;
 }) {
   const url = `${siteConfig.url}/${opts.locale}/case-studies/${opts.slug}`;
   return {
@@ -92,6 +95,7 @@ export function caseStudySchema(opts: {
     '@type': 'TechArticle',
     headline: opts.title,
     description: opts.description,
+    ...(opts.image ? { image: opts.image } : {}),
     datePublished: opts.date,
     inLanguage: opts.locale === 'zh' ? 'zh-TW' : 'en',
     keywords: opts.tags.join(', '),

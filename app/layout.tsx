@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
+import { getLocale } from 'next-intl/server';
 import { siteConfig } from '@/lib/site';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { Analytics } from '@/components/analytics/Analytics';
@@ -62,10 +63,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Resolve the active locale so `<html lang>` matches the page language
+  // (next-intl falls back to the default locale outside localized routes).
+  const locale = await getLocale();
+  const lang = locale === 'zh' ? 'zh-TW' : 'en';
   return (
     <html
-      lang="zh-TW"
+      lang={lang}
       className={`${spaceGrotesk.variable} ${jakarta.variable} ${jetbrains.variable}`}
       suppressHydrationWarning
     >

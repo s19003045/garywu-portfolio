@@ -6,24 +6,9 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { ConsentBanner } from '@/components/analytics/ConsentBanner';
-import type { Metadata } from 'next';
 
 export async function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
-}
-
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ locale: string }>;
-}): Promise<Metadata> {
-  const { locale } = await params;
-  return {
-    alternates: {
-      canonical: `/${locale}`,
-      languages: { zh: '/zh', en: '/en' },
-    },
-  };
 }
 
 export default async function LocaleLayout({

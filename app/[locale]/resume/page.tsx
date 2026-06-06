@@ -2,12 +2,13 @@ import { getTranslations } from 'next-intl/server';
 import { PrintButton } from '@/components/resume/PrintButton';
 import { DownloadLink } from '@/components/analytics/DownloadLink';
 import { siteConfig } from '@/lib/site';
+import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'resume' });
-  return { title: t('eyebrow'), description: t('headline') };
+  return { title: t('eyebrow'), description: t('headline'), alternates: localeAlternates(locale, '/resume') };
 }
 
 // ─── Bilingual résumé data ───────────────────────────────────
