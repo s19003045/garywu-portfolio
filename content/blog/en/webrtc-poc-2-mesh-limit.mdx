@@ -1,0 +1,105 @@
+---
+title: "Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture"
+date: "2026-06-17"
+description: "Phase 2 pushed a 1:1 WebRTC setup into multi-user mesh. The features can work, but connection count, upload bandwidth, and state management quickly expose the ceiling of the mesh model."
+tags: ["WebRTC", "Mesh", "System Architecture", "Engineering Thinking"]
+---
+
+After finishing a 1:1 call, the next question comes naturally: can this be extended to multiple participants?
+
+At first glance the answer seems simple. If two people can connect, then with three or four people, don't you just create a few more connections?
+
+That is exactly what Phase 2 explored: take a 1:1 P2P setup and push it into a multi-user mesh, then add chat, screen sharing, a participant list, and TURN.
+
+Functionally, it does work.
+
+And precisely because it works, the limitations of mesh become much more concrete.
+
+The key point of this article is simple: mesh can support multi-party calling, but once the room grows, every participant takes on more connection and upload cost together.
+
+## A plain-language way to think about it
+
+A multi-party call is not just a single-user call repeated a few times. As soon as one more person joins, every device in the room has to maintain more connections and push more upload traffic.
+
+You can think of mesh as “everyone calling everyone else directly.” As the room grows, the number of lines and the burden both grow with it.
+
+![A diagram of multi-party mesh connection and upload cost, showing the first scaling limit of WebRTC](/post_image/多人通話為什麼不能只靠%20Mesh：WebRTC%20架構的第一個上限.png)
+
+## Mesh cost does not grow linearly
+
+In a mesh architecture, each participant needs one PeerConnection to every other participant in the room.
+
+If a room has N people, each person maintains N-1 connections. More importantly, each person not only receives multiple streams, but also has to upload their own stream N-1 times.
+
+At 3 to 5 people, this can still be fine as a POC. But once the room grows, the cost expands very quickly.
+
+The real question is not “can it connect?” but “after it connects, can it still remain stable?”
+
+## The more features you add, the harder the state becomes to manage
+
+Phase 2 also added DataChannel chat and screen sharing.
+
+DataChannel is interesting because it lets application data travel over the WebRTC connection itself without needing a separate HTTP API. But that also means every peer-to-peer data channel has to be created, observed, and cleaned up.
+
+Screen sharing makes state management even more complex. Users are no longer just toggling microphone and camera. They may replace the video track in the middle of the call. At that point, you are not only managing UI state; you are also dealing with senders inside existing PeerConnections, track replacement, and remote video updates.
+
+So the complexity of multi-user calls does not come only from “having a few more people.” Every feature multiplies against every peer lifecycle in the room.
+
+## TURN solves connectivity, not the architectural limit
+
+Once TURN was added, another boundary became clearer.
+
+TURN solves problems in strict NAT environments, enterprise networks, or any scenario where direct P2P connection fails. It is a very important part of practical WebRTC, because without TURN, connection success rates in real networks can be unreliable.
+
+But TURN does not make mesh scalable.
+
+TURN solves “can these peers connect at all?” It does not solve “will the cost explode when more users join?” If every participant still needs to upload N-1 copies of their media, TURN only helps those links succeed. It does not change the bandwidth model.
+
+## The real value of this phase
+
+The value of Phase 2 is not that it proves mesh is suitable for a production multi-party meeting product.
+
+In fact, the value is the opposite: it let me feel directly why mesh has a limit.
+
+If you only read architecture posts, it is easy to know that SFU is better than mesh for larger rooms. But after building mesh yourself, you understand much more clearly:
+
+- Every user who joins affects everyone else's connections in the room
+- Every user who leaves requires correct cleanup across multiple PeerConnections
+- Every media feature has to consider multi-peer synchronisation
+- TURN improves connectivity, but it does not remove mesh upload cost
+
+## Why I did not jump straight to SFU
+
+From the outcome alone, if mesh has such a visible limit, should you start with SFU from day one?
+
+If the goal is a production product, maybe yes.
+
+But if the goal is to understand WebRTC, I think Phase 2 is necessary. SFU moves a lot of complexity to the server side. Without understanding peer connection, track, candidate, renegotiation, and room state first, it becomes much harder to reason about where problems come from once you move into SFU.
+
+That is why this project is divided into phases.
+
+Not because each phase is the final answer, but because each phase is intentionally designed to expose one specific limitation.
+
+And the limitation exposed by Phase 2 is very clear: mesh can produce a working multi-party call, but it is not the answer to scale.
+
+## Quick glossary
+
+- **PeerConnection**: the core browser object used to establish a WebRTC connection.
+- **DataChannel**: a way to transfer non-media data over a WebRTC connection.
+- **TURN**: a relay server used when peers cannot connect directly.
+- **Mesh**: an architecture where everyone connects directly to everyone else in the room.
+
+---
+
+## WebRTC POC series
+
+This is Part 2 of the series. Part 1 clarified signaling and presence in a 1:1 WebRTC setup. This article moves one step further into the first architectural limit of multi-user mesh.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. **Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture**
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+
+Previous: [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+
+Next: [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)

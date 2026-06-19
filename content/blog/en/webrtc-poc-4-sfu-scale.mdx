@@ -1,0 +1,128 @@
+---
+title: "From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems"
+date: "2026-06-19"
+description: "Phase 5 and Phase 6 moved the architecture from mesh into SFU and multi-node operations. Real scale is not about making one server bigger. It is about changing the media-forwarding model, room routing, shared state, and observability together."
+tags: ["WebRTC", "SFU", "Pion", "Redis", "System Architecture"]
+---
+
+After the previous phases, one thing had already become clear: mesh is useful for understanding WebRTC, but it is not the final form of a multi-user video system.
+
+To move toward larger rooms and more stable behavior, the architecture has to move from mesh to SFU.
+
+That is what Phase 5 and Phase 6 are about.
+
+The central point of this article is simple: real scale is not achieved by making a server bigger. It comes from changing media forwarding, routing, shared state, and observability together.
+
+## A plain-language way to think about it
+
+The key idea of SFU is not merely “put a server in the middle.” It is that each participant only uploads one media stream, and the server forwards that stream to the rest of the room.
+
+If mesh is like everyone individually calling everyone else, SFU is like a relay station distributing the same signal to multiple recipients.
+
+![An architecture diagram showing the evolution from mesh to SFU and the path toward scalable video systems](/post_image/從%20Mesh%20到%20SFU：視訊系統真正走向規模化的轉折.png)
+
+## SFU changes the bandwidth model
+
+In mesh, each participant uploads their media stream to every other participant in the room.
+
+The SFU model is different. Each client uploads one stream to the server, and the server forwards it to others.
+
+That may sound like “just one more server in the middle,” but architecturally it changes the upload cost from O(N) to something much closer to O(1).
+
+For end users, that is a critical difference. In most real scenarios, upload bandwidth is much more limited than download bandwidth, so the bottleneck in mesh usually shows up first on the client side.
+
+## The point of building an SFU is not to reject mature products
+
+Phase 5 used Go + Pion to build a minimal SFU.
+
+That does not mean a production product must implement its own SFU from scratch. In fact, if the goal is to ship a large commercial video system quickly, mature solutions like LiveKit are absolutely worth evaluating.
+
+But from the perspective of learning and architecture understanding, building a minimal SFU yourself is very valuable.
+
+Because then you really encounter these problems directly:
+
+- The server also has to participate in WebRTC negotiation
+- The server has to receive tracks uploaded by clients
+- The server has to forward those tracks to other subscribers
+- When someone joins or leaves, renegotiation may be required
+- Simulcast affects how different network conditions choose video quality
+
+If a framework hides all of that, it becomes easy to know only that “it works,” without knowing where to look when the system misbehaves.
+
+## A single-node SFU is still not the same as scale
+
+Once SFU is in place, the participant ceiling of a single room improves dramatically compared with mesh.
+
+But that still does not give you a system for thousands of users.
+
+A single node still has limits in CPU, memory, bandwidth, and connection count. Once the number of rooms and users grows, the next questions become: which SFU node should a user be routed to? Are members of the same room on the same node? What happens to room state when a node fails?
+
+That is what Phase 6 starts to address.
+
+## Router, Redis, JWT, and Prometheus are not decoration
+
+Phase 6 added multiple SFU nodes, a router, Redis, JWT, Prometheus, and load testing.
+
+Those may look like operational accessories, but each one maps directly to a real system constraint.
+
+The router solves the problem of which SFU node should own a room.
+
+Redis solves the problem of shared room and node state across multiple nodes.
+
+JWT solves the problem of who is allowed to enter a room.
+
+Prometheus solves the problem of whether the system is observable when something goes wrong.
+
+Load testing avoids making scaling decisions based only on intuition.
+
+In other words, Phase 6 is no longer only about “can the call be established?” It is about “can this system actually be operated?”
+
+## The real turning point
+
+Looking back at the whole project, Phase 5 is the architectural turning point, while Phase 6 is the systems-operability turning point.
+
+Phase 5 changes the media model from peer-to-peer into server-assisted forwarding.
+
+Phase 6 changes a single service into something that can be routed, monitored, load-tested, and expanded.
+
+Taken together, those two shifts are much closer to the kinds of problems a real production video product has to solve.
+
+## The final point of the series
+
+If you only look at the end result, this project may look like an attempt to build a WebRTC video system.
+
+But to me, it is more like an architecture-evolution exercise.
+
+Each phase was not a random feature addition. Each phase answered a concrete question:
+
+- What is the minimum coordination required for a 1:1 call?
+- Can Firestore replace a signaling server?
+- Where is the ceiling of mesh?
+- How do frontend and backend become maintainable?
+- Why is SFU the key to multi-user video?
+- After moving to multiple nodes, how do operational concerns surface?
+
+What matters is not only the final running code. What matters is that each limitation was seen, broken down, and recorded one by one.
+
+That is also why I think this project works well as a series of articles: it is not a finished showpiece built in one shot. It is an engineering process that gradually forced the real problems into view.
+
+## Quick glossary
+
+- **SFU**: Selective Forwarding Unit, a server that receives and forwards media.
+- **Simulcast**: sending the same video stream in multiple quality levels at the same time.
+- **Router**: the component that decides which SFU node a user should be routed to.
+- **Redis**: an in-memory database commonly used for cross-node shared state.
+- **Prometheus**: a monitoring system used to collect and observe metrics.
+
+---
+
+## WebRTC POC series
+
+This is Part 4 of the series. The series started with 1:1 signaling, moved through multi-user mesh and maintainable stack choices, and finally arrived at SFU and multi-node operations.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. **From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems**
+
+Previous: [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)

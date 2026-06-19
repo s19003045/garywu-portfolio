@@ -1,0 +1,123 @@
+---
+title: "Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go"
+date: "2026-06-18"
+description: "The point of Phase 3 and Phase 4 was not simply to swap technologies. It was to move WebRTC connection lifecycles, state synchronisation, and signaling protocol into a frontend/backend structure that is easier to maintain."
+tags: ["WebRTC", "React", "TypeScript", "Go", "System Design"]
+---
+
+After Phase 1 and Phase 2, the core WebRTC flow was already working.
+
+But another question started to surface: if this POC keeps growing, is the original implementation style still maintainable?
+
+On the surface, Phase 3 and Phase 4 look like a technology-stack migration: the frontend moves from vanilla JavaScript to React + TypeScript, and the backend moves from Node.js to Go.
+
+But the real point is not “moving to newer technology.” The real point is making the system's boundaries clearer.
+
+The main idea of this article is simple: upgrading the stack is not about novelty. It is about making state, protocol, and lifecycle easier to maintain.
+
+## A plain-language way to think about it
+
+This article is not arguing that React, TypeScript, or Go are somehow trendier. It is arguing that once a WebRTC system starts growing, the code has to become easier to understand, split apart, test, and maintain.
+
+React helps separate UI from state. TypeScript helps put structure around the message format. Go makes long-lived connections and room lifecycle management easier to organise.
+
+![Turning a WebRTC POC into a maintainable system: the role of React, TypeScript, and Go across the stack](/post_image/把%20WebRTC%20POC%20變成可維護系統：React、TypeScript%20與%20Go%20的角色.png)
+
+## WebRTC easily turns into a pile of imperative flows
+
+In a minimal POC, putting everything into one `client.js` file is acceptable.
+
+Capturing local media, creating the PeerConnection, handling signaling messages, updating the UI, joining the room, and leaving the room all in one place can actually be the fastest way to validate the idea.
+
+But once multi-user communication enters the picture, that style becomes hard to reason about very quickly.
+
+Because WebRTC is not a single linear flow. It includes all of these at the same time:
+
+- State changes triggered by user interaction
+- Asynchronous results from browser media APIs
+- Remote events coming from WebSocket
+- Callbacks fired by PeerConnection itself
+- Lifecycles around track and ICE state
+
+If these responsibilities are not separated, every new feature makes the existing flow harder to verify.
+
+## The value of React is not the UI itself, but the state boundary
+
+Phase 3 rewrote the frontend with React + TypeScript.
+
+The value was not only componentised UI. It was that different responsibilities could be split into units that were easier to reason about: `VideoGrid`, `Controls`, `ChatPanel`, `ParticipantList`, and hooks for local media, peer connection, and signaling.
+
+After that split, the frontend could start answering important questions:
+
+- Which states belong to the UI?
+- Which states come from the signaling server?
+- Which states should actually be owned by the PeerConnection?
+- Which cleanup actions must be tied to component lifecycle?
+
+In WebRTC frontends, the hardest part is often not the visual layer. It is deciding where each piece of state really belongs.
+
+## TypeScript turns signaling into a contract
+
+Another focus of Phase 3 was making signaling messages typed.
+
+At the POC stage, a message can just be a few JSON objects. But once events like `join`, `leave`, `offer`, `answer`, `candidate`, `chat`, and screen-share messages all start mixing together, the absence of types makes subtle mistakes much easier.
+
+The value of TypeScript here is not that it makes the code look more formal. It makes the signaling protocol into a contract.
+
+The frontend no longer “receives a blob and guesses what it is.” Each event gets a defined structure. That also matters when the backend implementation changes later, because once the protocol is clear, the server can be replaced more safely.
+
+## The Go backend is really about long-lived connection lifecycle
+
+Phase 4 moved the signaling server to Go.
+
+That was not because Node.js cannot do signaling. It was because Go's concurrency model is a very good environment for practicing large-scale long-lived connection management.
+
+Each WebSocket connection can have separate read and write goroutines. A hub can serialise room state through channels instead of spreading locking logic everywhere. That makes the responsibilities around rooms, participants, broadcasts, and disconnect cleanup much clearer.
+
+What really matters is this: the server is no longer only forwarding messages. It is starting to own room lifecycle as well.
+
+## Why Redis was postponed until Phase 6
+
+In Phase 4, I did not rush to add Redis.
+
+The reason is simple: a single-node signaling server does not yet need cross-node shared state. Adding Redis at that stage would make the architecture look more complete, but it would not necessarily make the real problem clearer.
+
+What I wanted to preserve was an extension point, not introduce distributed-system complexity too early.
+
+That is another advantage of working in phases: each stage only solves the limitation that has actually appeared.
+
+## What this phase taught me
+
+Phase 3 and Phase 4 made one thing much clearer to me: the technology upgrade itself is not the goal.
+
+The value of React, TypeScript, and Go has to be traced back to the engineering problems they help solve:
+
+- React makes frontend state boundaries and UI responsibilities clearer
+- TypeScript turns the signaling protocol into a contract that can be checked
+- Go makes long-lived connections and room lifecycle easier to structure
+
+If you switch technologies only for the sake of switching, those choices are not very meaningful.
+
+But in a WebRTC system — where asynchrony is high, events are dense, and state is easy to scatter across layers — these tools really can push a POC one step closer to a maintainable system.
+
+## Quick glossary
+
+- **Hook**: a function used to extract reusable state logic.
+- **Signaling protocol**: the agreed message format used between frontend and backend to exchange WebRTC-related data.
+- **Goroutine**: Go's lightweight execution unit for concurrent work.
+- **Channel**: Go's built-in primitive for passing data and coordinating concurrent flows.
+
+---
+
+## WebRTC POC series
+
+This is Part 3 of the series. The first two posts focused on WebRTC basics and the limit of mesh. This one explains why the POC needed to move into React, TypeScript, and Go.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. **Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go**
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+
+Previous: [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+
+Next: [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)

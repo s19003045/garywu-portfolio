@@ -1,0 +1,112 @@
+---
+title: "Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera"
+date: "2026-06-16"
+description: "When you first build a WebRTC POC, it's easy to think the main challenge is getting the camera working. But what actually makes the system complicated is signaling, SDP, ICE, and whether room state is still trustworthy after someone disappears."
+tags: ["WebRTC", "System Design", "Firestore", "Engineering Thinking"]
+---
+
+When I first started building a WebRTC POC, it was easy to focus on one thing: can I get two browsers to connect their cameras?
+
+But after finishing Phase 1, I realised pretty quickly that turning on the camera was not the hardest part.
+
+The hard part was this: how do two browsers find each other in the first place, exchange the information they need, establish a connection, and avoid leaving the room in a wrong state after someone leaves?
+
+In other words, the difficult part of WebRTC is not only media transport. It is all the coordination before and around media transport.
+
+## A plain-language way to think about it
+
+WebRTC is not just “turn on the camera.” It is closer to a process where two browsers first identify each other, then negotiate how audio and video can actually be exchanged.
+
+If you think of it like a phone call, signaling is how both sides exchange contact information and decide who calls first. SDP is how they describe what audio/video capabilities they support. ICE is how they find a path that can really connect.
+
+![WebRTC is harder than just turning on the camera: an overview of signaling, SDP, ICE, and presence](/post_image/從%201:1%20WebRTC%20開始：視訊系統真正困難的不是開鏡頭.png)
+
+## Overview of the four-part series
+
+If you read this article first and then continue in order, it becomes easier to see how the WebRTC POC evolved step by step.
+
+| Part | Topic | What it helps you understand first |
+| --- | --- | --- |
+| Part 1 | 1:1 signaling and presence | Why connection metadata exchange and offline-state handling matter before media even starts |
+| Part 2 | The limit of multi-user mesh | Why connection count and upload cost expand quickly as more people join |
+| Part 3 | A maintainable frontend/backend structure | Why React, TypeScript, and Go make the system easier to manage |
+| Part 4 | SFU and multi-node scale | Why serious multi-user video eventually moves toward SFU, routing, and observability |
+
+## Signaling is not an optional add-on to WebRTC
+
+Phase 1 used the most direct setup: Node.js, Express, and WebSocket.
+
+The browser handled local audio and video capture, while the WebSocket server forwarded offer, answer, and ICE candidate messages. The media itself did not pass through the server, but without a signaling server, neither side would even know how to start the call.
+
+This phase forced me to reframe one thing:
+
+**WebRTC gives you peer-to-peer media capabilities, but it does not give you a complete calling system.**
+
+It does not define rooms, roles, join flows, leave flows, or user state management for you. Those all have to be added at the application layer.
+
+## Can Firestore replace the server?
+
+Later I added Phase 1.1 to test a question: if the goal is only a 1:1 POC, can I avoid running my own signaling server and use Firestore instead?
+
+The answer is yes, but only if you are clear about what exactly it replaces.
+
+Firestore can store offers, answers, and ICE candidates in documents and subcollections, and browsers can listen for changes through snapshot listeners. For a teaching-oriented POC, that really can reduce the amount of server maintenance.
+
+But Firestore is not a WebSocket server, and it is not a presence system. It works well for storing explicit state and events. It is not ideal for high-frequency detection of whether a connection is still alive.
+
+## The real headache is when a person disappears
+
+Once the basic join flow worked, the next problem appeared immediately: if someone leaves the room, how can another user join again cleanly?
+
+When a user clicks a leave button normally, the frontend can clean up their role and signaling data. But in reality, people do not always leave through the happy path. They might just close the browser tab. Their network might drop.
+
+If you rely only on Firestore, the room may still think that user is present. Then the next user who tries to join can get blocked by stale role state.
+
+My first thought was a heartbeat: the browser periodically writes a “last seen” timestamp, and others treat it as expired after some threshold.
+
+But that quickly raises another issue: heartbeat writes keep hitting Firestore continuously, and both cost and usage increase. For a POC that may be acceptable. As an architectural direction, it is not very convincing.
+
+## The final split: Firestore for signaling, Realtime Database for presence
+
+So I separated responsibilities.
+
+Firestore remained responsible for signaling, because offer, answer, and candidate exchange are low-frequency, explicit data flows.
+
+Whether a user is still online moved to Realtime Database presence and `onDisconnect`. The reason is straightforward: RTDB is naturally better at connection-state management, and `onDisconnect` lets the backend help clean up presence when the connection drops, without forcing the frontend to keep writing heartbeat events.
+
+That made the Phase 1.1 design much clearer:
+
+- Firestore: exchange WebRTC handshake data
+- Realtime Database: manage room roles and presence
+- Frontend: manage media, peer connection, and UI state
+
+## What this phase taught me
+
+Phase 1 looks like a minimal 1:1 call, but it already exposes the most fundamental problem in video systems:
+
+**A call is not only a media stream. It also includes state coordination, lifecycle management, and error recovery.**
+
+If those foundations are not thought through first, then even if the UI looks polished and more features are added later, the system can still break on basic flows like join, leave, and reconnect.
+
+That is why I did not rush straight into multi-user mode. I first wrote down the decisions from Phase 1.1, because many real architecture problems show up from these seemingly small lifecycle details.
+
+## Quick glossary
+
+- **Signaling**: the process of exchanging connection information before the call starts.
+- **SDP**: the data format that describes what audio/video capabilities each side supports.
+- **ICE candidate**: a candidate network path discovered by the browser.
+- **Presence**: the state used to determine whether a user is still online.
+- **onDisconnect**: a mechanism that automatically cleans up state when a connection drops.
+
+---
+
+## WebRTC POC series
+
+This is Part 1 of the series. It documents how I moved a WebRTC POC from a 1:1 call toward SFU and multi-node architecture.
+
+1. **Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera**
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+
+Next: [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
