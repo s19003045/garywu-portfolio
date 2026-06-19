@@ -1,0 +1,122 @@
+---
+title: "把 WebRTC POC 變成可維護系統：React、TypeScript 與 Go 的角色"
+date: "2026-06-18"
+description: "Phase 3 與 Phase 4 的重點不是單純換技術棧，而是把 WebRTC 的連線生命週期、狀態同步與 signaling protocol 放進更可維護的前後端結構。"
+tags: ["WebRTC", "React", "TypeScript", "Go", "系統設計"]
+---
+
+做完 Phase 1 和 Phase 2 後，WebRTC 的核心流程已經可以跑起來。
+
+但這時候另一個問題開始浮現：如果這個 POC 繼續長大，原本的寫法是否還能維護？
+
+Phase 3 和 Phase 4 表面上是在換技術棧：前端從 vanilla JavaScript 改成 React + TypeScript，後端從 Node.js 改成 Go。
+
+但真正的重點不是「換成比較新的技術」，而是讓系統開始有比較清楚的邊界。
+
+這篇先記一件事：技術棧升級不是為了換新，而是為了讓狀態、協議和生命週期更好維護。
+
+## 先用白話理解
+
+這一篇不是在說 React、TypeScript 或 Go 比較潮，而是在說：當 WebRTC 開始長大時，程式必須更容易看懂、拆開、測試與維護。
+
+React 幫助把畫面和狀態切開，TypeScript 幫你把訊息格式管起來，Go 則讓長連線與房間生命週期比較好管理。
+
+## WebRTC 很容易變成命令式流程堆疊
+
+在最小 POC 裡，把所有流程寫在一個 client.js 裡是可以接受的。
+
+取得本機媒體、建立 PeerConnection、處理 signaling message、更新 UI、加入與離開房間，全部放在一起，反而比較容易快速驗證概念。
+
+但多人通話加進來後，這種寫法會很快變得難以推理。
+
+因為 WebRTC 的流程不是單向的。它同時包含：
+
+- 使用者操作觸發的狀態變化
+- 瀏覽器媒體 API 的非同步結果
+- WebSocket 傳來的遠端事件
+- PeerConnection 自己觸發的 callback
+- track 與 ICE 狀態的生命週期
+
+如果沒有把這些責任拆開，後續每加一個功能，都會讓原本的流程更難驗證。
+
+## React 的價值不是畫面，而是狀態邊界
+
+Phase 3 用 React + TypeScript 重寫前端。
+
+這一步的價值不只是元件化 UI，而是把不同責任切成比較能理解的單位：VideoGrid、Controls、ChatPanel、ParticipantList，以及處理本機媒體、peer connection、signaling 的 hooks。
+
+這樣做之後，前端開始能回答幾個重要問題：
+
+- 哪些狀態屬於 UI？
+- 哪些狀態來自 signaling server？
+- 哪些狀態其實應該由 PeerConnection 管？
+- 哪些清理動作必須跟 component lifecycle 綁在一起？
+
+WebRTC 前端真正難的地方，常常不是畫面，而是狀態歸屬。
+
+## TypeScript 讓 signaling protocol 變成契約
+
+Phase 3 的另一個重點是把 signaling message 型別化。
+
+在 POC 階段，message 可以只是幾個 JSON object。但當事件變多，join、leave、offer、answer、candidate、chat、screen share 都混在一起時，沒有型別就很容易出現隱性錯誤。
+
+TypeScript 的價值在這裡不是讓程式碼看起來更正式，而是讓 signaling protocol 變成一種契約。
+
+前端不再只是「收到一包資料後猜它是什麼」，而是讓每種事件都有明確結構。這對後面切換後端實作也很重要，因為協議清楚，server 才能被替換。
+
+## Go 後端處理的是長連線生命週期
+
+Phase 4 把 signaling server 改成 Go。
+
+這一步不是因為 Node.js 不能做 signaling，而是因為 Go 的併發模型很適合用來練習大量長連線管理。
+
+每條 WebSocket connection 可以有讀寫 goroutine，Hub 用 channel 序列化房間狀態，避免到處加鎖。這種模型讓房間、成員、廣播、離線清理的責任更清楚。
+
+真正重要的是：server 不只是轉送訊息，它也開始負責房間生命週期。
+
+## 為什麼 Redis 延後到 Phase 6
+
+在 Phase 4，我沒有急著加 Redis。
+
+原因很簡單：單節點 signaling server 還不需要跨節點共享狀態。這時候加入 Redis，會讓架構看起來更完整，但不一定讓問題更清楚。
+
+我比較想保留的是擴展點，而不是過早引入分散式複雜度。
+
+這也是分 phase 的好處：每個階段只解決當下真正出現的限制。
+
+## 這個階段學到的事
+
+Phase 3 和 Phase 4 讓我更確定一件事：技術棧升級本身不是目的。
+
+React、TypeScript、Go 的價值，必須回到它們解決了什麼工程問題：
+
+- React 幫助前端狀態與 UI 邊界更清楚
+- TypeScript 讓 signaling protocol 變成可檢查的契約
+- Go 讓長連線與房間生命週期更容易被結構化
+
+如果只是為了換技術而換技術，這些選擇沒有太大意義。
+
+但在 WebRTC 這種高度非同步、事件密集、狀態容易分散的系統裡，這些工具確實能把 POC 往可維護系統推進一步。
+
+## 名詞小抄
+
+- **Hook**：把可重用的狀態邏輯抽成函式。
+- **Signaling protocol**：前後端交換 WebRTC 資料時的訊息格式約定。
+- **Goroutine**：Go 的輕量執行單位，用來處理並發工作。
+- **Channel**：Go 中用來傳遞資料、協調並發流程的管道。
+
+
+---
+
+## WebRTC POC 系列文章
+
+這是系列第 3 篇。前兩篇聚焦 WebRTC 與 mesh 的限制，這一篇整理為什麼要把 POC 推進到 React、TypeScript 與 Go。
+
+1. [從 1:1 WebRTC 開始：視訊系統真正困難的不是開鏡頭](/zh/blog/webrtc-poc-1-signaling-presence)
+2. [多人通話為什麼不能只靠 Mesh：WebRTC 架構的第一個上限](/zh/blog/webrtc-poc-2-mesh-limit)
+3. **把 WebRTC POC 變成可維護系統：React、TypeScript 與 Go 的角色**
+4. [從 Mesh 到 SFU：視訊系統真正走向規模化的轉折](/zh/blog/webrtc-poc-4-sfu-scale)
+
+上一篇：[多人通話為什麼不能只靠 Mesh：WebRTC 架構的第一個上限](/zh/blog/webrtc-poc-2-mesh-limit)
+
+下一篇：[從 Mesh 到 SFU：視訊系統真正走向規模化的轉折](/zh/blog/webrtc-poc-4-sfu-scale)

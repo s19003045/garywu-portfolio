@@ -1,0 +1,111 @@
+---
+title: "從 1:1 WebRTC 開始：視訊系統真正困難的不是開鏡頭"
+date: "2026-06-16"
+description: "一開始做 WebRTC POC，很容易以為重點是把鏡頭打開。但真正讓系統開始變複雜的，是 signaling、SDP、ICE，以及使用者離開後狀態是否還可信。"
+tags: ["WebRTC", "系統設計", "Firestore", "工程思考"]
+---
+
+一開始做 WebRTC POC 時，很容易把注意力放在一件事上：能不能把兩個瀏覽器的鏡頭接起來。
+
+但實作到 Phase 1 後，我很快發現，開鏡頭不是最困難的地方。
+
+真正困難的是：兩個瀏覽器要如何在一開始找到彼此、交換必要資訊、建立連線，並且在有人離開後，不讓房間狀態停留在錯誤的樣子。
+
+也就是說，WebRTC 難的不是只有媒體傳輸，而是媒體傳輸之前與之外的協調。
+
+## 先用白話理解
+
+WebRTC 不是「把鏡頭打開」而已，它比較像一套讓兩個瀏覽器先互相確認身分、再決定怎麼傳影音的流程。
+
+如果把它想成打電話，Signaling 就是在交換號碼和確認誰先撥出，SDP 是把雙方能支援的影音條件講清楚，ICE 則是在找實際能連上的路。
+
+## 四篇總覽
+
+如果先看完這一篇，再順著下面的順序看，會比較容易理解整個 WebRTC POC 怎麼一步一步長出來。
+
+| 篇章 | 主題 | 先看懂什麼 |
+| --- | --- | --- |
+| 第 1 篇 | 1:1 signaling 與 presence | 為什麼連上鏡頭之前，先要交換連線資訊與處理離線狀態 |
+| 第 2 篇 | 多人 mesh 的上限 | 為什麼人一多，連線與上傳成本會快速膨脹 |
+| 第 3 篇 | 可維護的前後端結構 | 為什麼 React、TypeScript、Go 能讓系統更好管 |
+| 第 4 篇 | SFU 與多節點規模化 | 為什麼真正要做多人視訊，最後會走向 SFU 與路由/觀測 |
+
+## Signaling 不是 WebRTC 的附屬品
+
+Phase 1 用的是最直接的方式：Node.js、Express、WebSocket。
+
+瀏覽器負責取得本機音訊與影像，WebSocket server 則負責轉送 offer、answer 與 ICE candidate。影音本身不經過 server，但沒有 signaling server，兩邊根本不知道該怎麼開始通話。
+
+這個階段讓我重新理解一件事：
+
+**WebRTC 是點對點媒體能力，但不是一套完整的通話系統。**
+
+它沒有幫你定義房間、角色、加入流程、離開流程，也不會替你管理使用者狀態。這些都要由應用層補上。
+
+## Firestore 可以取代 server 嗎？
+
+後來我加了 Phase 1.1，想驗證一個問題：如果只是 1:1 POC，是否可以不用自架 signaling server，而是用 Firestore 取代？
+
+答案是可以，但要很清楚它取代的是什麼。
+
+Firestore 可以用文件與子集合保存 offer、answer、ICE candidate，瀏覽器透過 snapshot listener 監聽變化。對教學型 POC 來說，這確實能降低 server 維護成本。
+
+但 Firestore 不是 WebSocket server，也不是 presence system。它適合保存狀態與事件，不適合拿來高頻偵測連線是否還活著。
+
+## 真正麻煩的是「人不見了」
+
+做完基本加入通話後，下一個問題馬上出現：如果使用者離開房間，要怎麼再加入？
+
+正常按下離開按鈕時，前端可以清掉自己的角色與 signaling 資料。但現實裡，使用者不一定會照流程操作。他可能只是關掉 browser tab，甚至網路突然斷線。
+
+這時候如果只靠 Firestore，房間可能還以為原本的人仍然存在。下一個使用者進來時，角色就可能被卡住。
+
+一開始我想到 heartbeat：瀏覽器定期寫入最後在線時間，其他人根據時間判斷是否過期。
+
+但這很快帶出另一個問題：heartbeat 會持續寫入 Firestore，成本與用量都會上升。對一個 POC 來說可以接受，但如果把它當成架構方向，就不是很好的選擇。
+
+## 最後的取捨：Firestore 負責 signaling，Realtime Database 負責 presence
+
+後來我把職責拆開。
+
+Firestore 繼續負責 signaling，因為 offer、answer、candidate 是低頻、明確、需要被交換的資料。
+
+使用者是否還在線，則交給 Realtime Database presence 與 onDisconnect。原因是 RTDB 原本就比較適合連線狀態管理，onDisconnect 可以在連線中斷時由後端協助清理 presence，不需要前端一直寫 heartbeat。
+
+這個決策讓 Phase 1.1 的邏輯變清楚：
+
+- Firestore：交換 WebRTC 交握資料
+- Realtime Database：管理房間角色與 presence
+- 前端：處理媒體、peer connection 與 UI 狀態
+
+## 這個階段學到的事
+
+Phase 1 看起來只是最小版 1:1 通話，但它其實已經暴露出視訊系統最核心的問題：
+
+**通話不是只有媒體流，還包含狀態協調、生命週期管理與錯誤復原。**
+
+如果這些基礎沒有先想清楚，後面即使把畫面做漂亮、把功能加多，也很容易在加入、離開、重連這些基本流程上出問題。
+
+這也是為什麼我後來沒有急著直接做多人，而是先把 Phase 1.1 的決策記錄下來。因為很多真正的架構問題，都是從這些看似很小的流程開始浮現的。
+
+## 名詞小抄
+
+- **Signaling**：通話前交換連線資訊的流程。
+- **SDP**：描述雙方能支援哪些影音條件的資料格式。
+- **ICE candidate**：瀏覽器找到的可連線路徑候選。
+- **Presence**：判斷使用者是否仍在線上的狀態。
+- **onDisconnect**：連線斷掉時自動清理狀態的機制。
+
+
+---
+
+## WebRTC POC 系列文章
+
+這是系列第 1 篇。這個系列記錄我如何把一個 WebRTC POC，從 1:1 通話逐步推進到 SFU 與多節點架構。
+
+1. **從 1:1 WebRTC 開始：視訊系統真正困難的不是開鏡頭**
+2. [多人通話為什麼不能只靠 Mesh：WebRTC 架構的第一個上限](/zh/blog/webrtc-poc-2-mesh-limit)
+3. [把 WebRTC POC 變成可維護系統：React、TypeScript 與 Go 的角色](/zh/blog/webrtc-poc-3-maintainable-stack)
+4. [從 Mesh 到 SFU：視訊系統真正走向規模化的轉折](/zh/blog/webrtc-poc-4-sfu-scale)
+
+下一篇：[多人通話為什麼不能只靠 Mesh：WebRTC 架構的第一個上限](/zh/blog/webrtc-poc-2-mesh-limit)

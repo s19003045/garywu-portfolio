@@ -66,7 +66,8 @@
     "status_poc": "POC",
     "visit": "前往網站",
     "view_repo": "查看原始碼",
-    "coming_soon": "更多實驗持續進行中"
+    "coming_soon": "更多實驗持續進行中",
+    "read_article": "先從第 1 篇開始"
   },
   "blog": {
     "eyebrow": "Writing",

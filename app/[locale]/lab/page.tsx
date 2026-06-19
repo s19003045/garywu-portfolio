@@ -20,6 +20,7 @@ interface SideProject {
   description: string;
   tags: string[];
   url?: string;
+  articleSlug?: string;
   repo?: string;
 }
 
@@ -41,6 +42,16 @@ const projectsZh: SideProject[] = [
       '用於客戶 LINE 群組的 AI 客服機器人：結合 RAG（檢索公司內部與專案知識）與 LLM 即時回覆。當客戶反映符合條件的問題（如系統異常）時，自動建立 GitHub Issue 列入追蹤，交由 RD 團隊接手；RD 更可透過 AI Agent 追蹤 issue，並基於對專案的理解快速提出解法參考。',
     tags: ['LLM', 'RAG', 'Chatbot', 'LINE API', 'GitHub API', 'AI Agent'],
   },
+  {
+    id: 'webrtc-poc-roadmap',
+    status: 'poc',
+    title: 'WebRTC POC Roadmap — 從 1:1 通話到 SFU 叢集',
+    description:
+      '一個分階段拆解 WebRTC 架構演進的技術實驗：從 1:1 P2P、Firestore signaling、多人成員 mesh、React + TypeScript 前端、Go signaling server，到 Pion SFU 與多節點 Router、Redis、JWT、Prometheus。這個專案很適合作為系列技術文章，逐篇記錄每個 phase 的限制、痛點、取捨與解法。',
+    tags: ['WebRTC', 'P2P', 'SFU', 'Pion', 'Go', 'React', 'Redis', 'Prometheus'],
+    articleSlug: 'webrtc-poc-1-signaling-presence',
+    repo: 'https://github.com/s19003045/webrtc-poc',
+  },
 ];
 
 const projectsEn: SideProject[] = [
@@ -60,6 +71,15 @@ const projectsEn: SideProject[] = [
     description:
       'An AI support bot for client LINE groups: combining RAG (retrieving internal company & project knowledge) with an LLM for real-time replies. When a client reports a qualifying issue (e.g. a system anomaly), it auto-creates a GitHub Issue for tracking and hands off to the RD team — who can further use an AI agent to track the issue and propose solutions quickly based on project understanding.',
     tags: ['LLM', 'RAG', 'Chatbot', 'LINE API', 'GitHub API', 'AI Agent'],
+  },
+  {
+    id: 'webrtc-poc-roadmap',
+    status: 'poc',
+    title: 'WebRTC POC Roadmap — From 1:1 Calls to an SFU Cluster',
+    description:
+      'A staged technical experiment that breaks down the evolution of WebRTC architecture: 1:1 P2P, Firestore signaling, multi-user mesh, a React + TypeScript client, a Go signaling server, then a Pion SFU with multi-node routing, Redis, JWT, and Prometheus. The project is designed as a strong technical-writing source, with each phase documenting constraints, pain points, trade-offs, and solutions.',
+    tags: ['WebRTC', 'P2P', 'SFU', 'Pion', 'Go', 'React', 'Redis', 'Prometheus'],
+    repo: 'https://github.com/s19003045/webrtc-poc',
   },
 ];
 
@@ -109,6 +129,17 @@ function LabContent({ locale }: { locale: string }) {
               ))}
             </div>
             <div className="flex items-center gap-4 mt-auto">
+              {p.articleSlug && (
+                <ContentLink
+                  href={`/${locale}/blog/${p.articleSlug}`}
+                  contentType="lab"
+                  itemId={p.id}
+                  itemName={p.title}
+                  className="text-xs font-mono text-[var(--accent)] hover:underline underline-offset-4"
+                >
+                  {t('read_article')} →
+                </ContentLink>
+              )}
               {p.url && (
                 <ContentLink
                   href={p.url}
@@ -137,7 +168,7 @@ function LabContent({ locale }: { locale: string }) {
       </div>
 
       <div className="mt-10 py-6 border-t border-[var(--border)]">
-        <p className="text-xs font-mono text-[var(--fg-subtle)]">// {t('coming_soon')}</p>
+        <p className="text-xs font-mono text-[var(--fg-subtle)]">{`// ${t('coming_soon')}`}</p>
       </div>
     </>
   );
