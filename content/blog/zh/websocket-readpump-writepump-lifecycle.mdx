@@ -1,0 +1,145 @@
+---
+title: "WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來"
+date: "2026-06-21"
+order: 4
+description: "從一條 WebSocket 長連線出發，理解 readPump、writePump、ping/pong、deadline、close channel 與 close connection 在 Go server 裡各自扮演的角色。"
+tags: ["Go", "AI Agent", "WebSocket", "除錯", "網路"]
+---
+
+當我開始看這個 Go WebRTC server 時，另一個很快浮現的問題是：
+
+**一條 WebSocket 連線，從建立到離開，中間到底發生了什麼事？**
+
+尤其當我看到 `readPump`、`writePump`、`ping`、`pong`、`close(c.send)`、`c.conn.Close()` 混在一起時，我一開始其實很容易把不同層次的事情混在一起。
+
+如果你還不知道這個 Go server 在整個 WebRTC POC 裡扮演什麼角色，建議先讀前導文：[讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼](/zh/blog/webrtc-poc-go-series-primer)。
+
+所以這篇不只是要解釋這幾個名詞，而是要把一條 WebSocket 連線從建立、收發資料、偵測異常到清理收工，整理成一條可以被追蹤的生命週期。
+
+## 一開始我最混亂的地方
+
+我原本覺得，既然 `writePump` 在寫 socket，客戶端如果斷線，應該是它最先發現問題。
+
+這個推論不是完全不可能，但放回這個實作裡，它通常不是最常見的第一個偵測點。
+
+後來我才慢慢看懂，這條生命週期最好拆成三件事來理解：
+
+1. 誰負責讀
+2. 誰負責寫
+3. 誰負責宣告「這條連線的生命週期結束了」
+
+只要這三個角色分清楚，整個流程就會清楚很多。
+
+這也是 AI 在這一段最有幫助的地方。它不是只說明函式在做什麼，而是幫我把這些函式排成一條事件時間線。
+
+## 為什麼 readPump 與 writePump 要拆開
+
+AI 後來用很好的方式點出一件事：
+
+這不是單純為了「讓讀寫平行」，而是因為 WebSocket 函式庫本身就希望同一條連線維持一個 reader 與一個 writer。
+
+所以這裡的拆法不是隨便命名，而是責任設計：
+
+- `readPump` 只做讀取與把訊息送進 Hub
+- `writePump` 只做寫出與心跳 ping
+
+如果把它們硬塞進同一個迴圈，常見問題是：
+
+- 讀取阻塞住時，寫入與 ping 無法即時執行
+- 架構上容易讓同一條連線被多處同時寫入
+
+一拆開後，很多問題就自然少掉了。
+
+所以我後來比較不把 `readPump` / `writePump` 當成命名習慣，而是把它們當成長連線程式裡非常核心的責任邊界。
+
+## readPump 負責的是「把生命週期終點送出來」
+
+這段是我後來最有收穫的地方。
+
+`readPump` 不只是收資料而已。它還在做兩件重要的事：
+
+1. 設定讀取上限與 deadline
+2. 在離開時透過 defer 把 unregister 送進 Hub
+
+也就是說，當讀取失敗、連線被關掉、或 deadline 超時時，`readPump` 會結束，接著 defer 觸發，把「這個 client 該離線清理了」的事件送給 Hub。
+
+這讓我開始理解：
+
+**真正控制狀態清理的，不是任意一個地方直接亂關，而是 readPump 把離線事件交回統一的 Hub 流程。**
+
+這個觀念很重要，因為它會直接影響你之後怎麼讀 `defer`、怎麼理解 `unregister`、也怎麼判斷一條連線是在哪個層次結束的。
+
+## ping/pong 與 deadline 解決的是半斷線問題
+
+如果只是正常關頁，理解起來還不難。
+
+比較麻煩的是另一種狀況：使用者網路突然斷掉，或瀏覽器連線死掉，但 server 不一定立刻收到一個很漂亮的「我離開了」訊號。
+
+這時 `writePump` 會定期送 ping，`readPump` 收到 pong 後延長 read deadline。只要一段時間沒再收到 pong，讀取就會超時，進而走到清理流程。
+
+這讓我第一次比較清楚 ping/pong 的實務意義：
+
+它不是裝飾性的心跳，而是在幫系統辨識「看起來還掛著，但其實已經死掉」的連線。
+
+## close channel 與 close connection 不是同一件事
+
+這也是我一開始最容易搞混的地方。
+
+我原本比較直覺地認為，`close(c.send)` 好像是在避免 client 再傳資料進來。
+
+後來被校正後，我才真的理解它的角色：
+
+- `c.conn.Close()` 是關閉 socket 連線
+- `close(c.send)` 是關閉 server 寫給這個 client 的送出佇列
+
+而且 `close(c.send)` 放在 Hub 的 `handleLeave()` 裡，不是隨便挑地方放，而是因為 Hub 是唯一真正掌握這條 client 狀態與送出路徑的角色。
+
+這樣做有兩個好處：
+
+1. 避免多個地方重複 close channel 造成 panic
+2. 讓 `writePump` 收到 `ok == false` 後正常收工
+
+這種 ownership 的觀念，我覺得是很多初學者在看併發程式時最值得培養的敏感度。
+
+學新語言時，最常見的不是完全不懂，而是不同層次混在一起。這裡剛好是很好的練習：socket 層、channel 層、Hub 狀態層，各自結束的訊號長什麼樣子。
+
+## 從 log 判斷生命週期，比硬背流程更有用
+
+後來我真的跑起 server、打開兩個分頁、再關掉其中一個，才發現這套理解開始變得具體。
+
+當看到類似 `read error`、`unregister`、`leave` 這些訊息依序出現時，我比較能把它們對應回生命週期：
+
+1. 讀取端先發現連線結束或異常
+2. defer 把 unregister 送給 Hub
+3. Hub 清理房間狀態
+4. Hub 關閉 `send` channel
+5. `writePump` 正常收工
+
+一旦可以把 log 與控制流程對上，程式就不再只是一堆函式名稱，而是一條可以被追蹤的事件鏈。
+
+對我來說，這也是從「大概知道」走到「真的能判讀」的分水嶺。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+看這類連線生命週期程式時，我覺得特別適合問 AI 這幾題：
+
+1. 這條連線的生命週期從哪裡開始
+2. 誰最常先偵測斷線
+3. close channel 與 close connection 各自代表什麼
+4. 誰有權關閉哪個資源，為什麼
+
+這些問題都比泛泛地問「請解釋這個檔案」更容易得到能學會的答案。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. **WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來**
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+上一篇：[goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+
+下一篇：[signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)

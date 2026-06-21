@@ -1,0 +1,141 @@
+---
+title: "The WebSocket Lifecycle: How readPump, writePump, and Cleanup Fit Together"
+date: "2026-06-21"
+order: 4
+description: "This article follows a single WebSocket connection from upgrade to cleanup, showing why `readPump` and `writePump` are split, how ping/pong and deadlines work, and why channel close is not the same as connection close."
+tags: ["Go", "AI Agent", "WebSocket", "Debugging", "Networking"]
+---
+
+When I started reading this Go WebRTC server, one of the first questions that made the code feel real was this:
+
+**What actually happens to a single WebSocket connection from the moment it is created to the moment it is cleaned up?**
+
+That question sounds basic, but it touches a surprising number of concepts at once: goroutines, heartbeat, deadlines, deferred cleanup, channel ownership, and disconnect handling.
+
+What helped most was turning those scattered pieces into a lifecycle.
+
+This article traces one connection through that lifecycle:
+
+- connection setup
+- read and write responsibilities
+- heartbeat and timeout handling
+- unregister flow
+- graceful shutdown of the send channel
+
+The main goal is to make the lifecycle readable as a timeline, not just as isolated functions.
+
+## the first confusion that mattered
+
+My first instinct was to assume that if the client disconnected, `writePump` would probably notice it first because it writes to the socket.
+
+That guess was not impossible, but it was not the most useful default understanding for this implementation.
+
+The better breakdown turned out to be:
+
+1. who reads
+2. who writes
+3. who declares that the connection lifecycle is over
+
+Once those three responsibilities became clear, the rest of the design became much easier to follow.
+
+## why `readPump` and `writePump` are separate
+
+The split is not only about parallelism.
+
+It also reflects the usage model of the WebSocket library: one reader and one writer per connection is the safe and intended pattern.
+
+That makes the separation meaningful in two ways:
+
+- `readPump` can block on reads without preventing writes or heartbeat
+- all writes can be funneled through one controlled path instead of many places writing to the same socket directly
+
+So this is not only a naming style. It is a responsibility boundary that protects the connection model.
+
+## `readPump` does more than just read
+
+At first glance, `readPump` looks like a loop that reads messages and forwards them to the Hub.
+
+That is true, but incomplete.
+
+It also becomes a common place where the system learns that the connection is effectively over.
+
+It sets the read limit.
+It sets and refreshes read deadlines.
+It reacts to missing pong signals.
+And when it returns, it uses `defer` to send the unregister event back into the Hub.
+
+That changed how I read the code.
+
+`readPump` is not just an input path. It is also one of the main lifecycle endpoints.
+
+## heartbeat and deadlines solve half-dead connections
+
+Normal tab close behavior is not the hardest case.
+
+The harder case is the one where the connection is effectively dead, but not cleanly closed from the server's point of view.
+
+That is where ping/pong and deadlines start making sense.
+
+`writePump` sends pings.
+`readPump` extends the read deadline when pongs come back.
+If pongs stop arriving, reads eventually time out and the cleanup path begins.
+
+That means heartbeat here is not ornamental. It is part of how the system decides whether a connection that still appears present should actually be treated as dead.
+
+## why closing the send channel is not the same as closing the socket
+
+This was one of the clearest corrections in my own understanding.
+
+It is easy to assume that once the connection closes, channel semantics are almost the same thing. They are not.
+
+- `c.conn.Close()` closes the underlying WebSocket connection
+- `close(c.send)` closes the server-side outbound queue for that client
+
+Those two operations live at different layers.
+
+The socket close ends the I/O transport.
+The channel close tells `writePump` that there will be no more outbound messages and it should finish cleanly.
+
+That is also why ownership matters. The side that truly owns the outbound path should be the one responsible for closing that channel.
+
+## logs made the lifecycle visible
+
+The lifecycle became much clearer once I ran the service, opened multiple tabs, and watched the logs in sequence.
+
+Lines like these started to map cleanly onto the control flow:
+
+- read error
+- unregister request
+- leave handling
+- send channel close
+- `writePump` exit
+
+At that point, the program stopped feeling like a cluster of function names and started feeling like a sequence I could actually reason about.
+
+That transition matters a lot when learning a new language. It is the difference between “I saw the code” and “I can now predict how the code behaves.”
+
+## what mattered most in this article
+
+If I had to reduce the main lesson to one idea, it would be this:
+
+**A WebSocket connection is not just a socket object. It is a lifecycle with distinct responsibilities, exit paths, and cleanup signals.**
+
+Once I started reading it that way, `readPump`, `writePump`, ping/pong, deadlines, and channel close all stopped competing for attention and started fitting into one coherent picture.
+
+## if you want to learn this way too
+
+When reading long-lived connection code in a language you do not fully know yet, here are better questions to ask an AI agent:
+
+- where does the lifecycle begin
+- who usually detects disconnect first
+- which resource closes at which layer
+- who owns cleanup responsibility
+- what practical problem is heartbeat really solving here
+
+## English version note
+
+This English article now mirrors the main structure of the Chinese version, though wording may continue to evolve as the bilingual series is refined.
+
+Previous: [goroutines, Channels, and the Hub: The First Time Go Concurrency Really Made Sense to Me](/en/blog/goroutine-channel-hub-go-concurrency)
+
+Next: [The signaling event flow: how join, signal, and leave move through the Go server](/en/blog/signaling-event-flow-join-signal-leave)
