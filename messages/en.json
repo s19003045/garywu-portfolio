@@ -79,6 +79,8 @@
     "all_posts": "← All posts",
     "tag_eyebrow": "Tag",
     "post_count": "{count, plural, =1 {# post} other {# posts}}",
+    "search_placeholder": "Search posts…",
+    "search_no_results": "No matching posts",
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",

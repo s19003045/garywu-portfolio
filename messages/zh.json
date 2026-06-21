@@ -79,6 +79,8 @@
     "all_posts": "← 所有文章",
     "tag_eyebrow": "標籤",
     "post_count": "{count} 篇文章",
+    "search_placeholder": "搜尋文章…",
+    "search_no_results": "找不到符合的文章",
     "categories": {
       "go-notes": "Go 學習筆記",
       "webrtc-system": "WebRTC 與系統設計",
