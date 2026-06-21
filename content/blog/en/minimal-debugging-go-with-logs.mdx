@@ -1,0 +1,110 @@
+---
+title: "Minimal Debugging: How I Used Logs to Understand a Go Service"
+date: "2026-06-22"
+order: 6
+description: "Instead of aiming for full observability on day one, I used a small number of carefully placed logs to understand join, signal, leave, and read errors in a Go service I was still learning."
+tags: ["Go", "AI Agent", "Debugging", "WebRTC", "Logs"]
+---
+
+When learning a new language, debugging is often where understanding stops being theoretical.
+
+That was definitely true for me here. Reading `hub.go` and `client.go` gave me structure, but logs gave me behavior. They let me see whether my mental model of join, signal, leave, and disconnect handling actually matched what the service was doing.
+
+What turned out to matter most was not adding many logs, but adding only the ones that could answer a precise question.
+
+The three most useful log positions were:
+
+- the input dispatch point
+- the forwarding point
+- the disconnect detection point
+
+Each one served a different purpose.
+
+The input dispatch point tells me whether the message even entered the Hub and with what type.
+The forwarding point tells me whether a target peer was actually found.
+The disconnect point tells me whether I am seeing a normal close, a read error, a timeout path, or something else.
+
+That is the real idea behind minimal debugging: every log line should exist to help rule out a specific uncertainty.
+
+## why fewer logs were more useful here
+
+When learning a new codebase, it is very easy to go to one of two extremes:
+
+- print almost nothing and rely on guesswork
+- print everything and drown in noise
+
+What helped me instead was a smaller question: if I can only add three logs, where do they create the most discriminating signal?
+
+That question changed the whole debugging style. It forced me to clarify what I was actually trying to learn from the running program.
+
+## logs turned code into an event timeline
+
+Once I ran the server and looked at the order of events, the service became much easier to reason about:
+
+- join arrives
+- join succeeds
+- existing peer gets a notification
+- signal arrives
+- signal gets forwarded
+- read error happens
+- unregister follows
+- leave cleanup completes
+
+That sequence is much more useful than a static explanation of the code. It turns the program into a story with causality.
+
+And that is often what a learner actually needs most.
+
+## errors themselves became learning material
+
+One small but memorable example was the port conflict error:
+
+`listen tcp :3000: bind: address already in use`
+
+That is not a Go syntax lesson. But it is a very good systems lesson.
+
+It forces you to understand:
+
+- how the server binds its port
+- why another process may already own it
+- whether you should free the port or change the configuration
+
+That made me appreciate something important: not every useful learning moment comes from the happy path in code. Sometimes the error itself is the lesson.
+
+## the AI's most useful role in debugging
+
+In debugging mode, the AI became most useful not as a solver but as a question refiner.
+
+It helped me ask:
+
+- what is the cheapest log that could disconfirm my current guess
+- which point in the flow best distinguishes a join problem from a signal problem
+- which output is informative and which output is just noise
+
+That is very different from asking an AI to magically debug everything.
+
+It turns the AI into a tool for building debugging judgment rather than outsourcing it.
+
+## what mattered most in this article
+
+The most important lesson here is probably this:
+
+**Logs are not only for fixing bugs after the fact. They are one of the fastest ways to turn a vague model of a system into a testable understanding of its behavior.**
+
+That is especially valuable when the language itself is still new to you.
+
+## if you want to learn this way too
+
+When debugging a service in a language you are still learning, these are strong questions to ask an AI agent:
+
+- if I can only add three logs, where should they go
+- which log best separates one hypothesis from another
+- is this error more likely a code problem or an environment problem
+- which logs are high-noise and should be removed first
+
+## English version note
+
+This English article now reflects the main learning path of the Chinese version, though later editing may still tune tone and examples.
+
+Previous: [The Signaling Event Flow: How join, signal, and leave Move Through the Go Server](/en/blog/signaling-event-flow-join-signal-leave)
+
+Next: [How to learn a new programming language more actively in the age of AI agents](/en/blog/active-learning-new-language-with-ai-agent)
