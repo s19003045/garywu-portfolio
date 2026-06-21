@@ -87,6 +87,11 @@
     "series_prev": "Previous",
     "series_next": "Next",
     "series_view_all": "View the whole series",
+    "load_more": "Load more",
+    "related": "Related posts",
+    "archive_eyebrow": "Archive",
+    "archive_headline": "All posts by year",
+    "view_archive": "Browse all posts by year →",
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",

@@ -214,6 +214,48 @@ export function getSeriesNav(slug: string, locale: string): SeriesNavInfo | null
   };
 }
 
+/**
+ * Posts related to the given one, best match first. Scored by shared tags
+ * (weighted) plus a same-category bonus. Posts in the *same series* are skipped
+ * — those are already surfaced by the series navigation.
+ */
+export function getRelatedPosts(slug: string, locale: string, limit = 3): PostMeta[] {
+  const all = getAllPosts(locale);
+  const current = all.find((p) => p.slug === slug);
+  if (!current) return [];
+  const currentTags = new Set(current.tags.map((t) => t.toLowerCase()));
+
+  return all
+    .filter((p) => p.slug !== slug && !(current.series && p.series === current.series))
+    .map((post) => {
+      const sharedTags = post.tags.filter((t) => currentTags.has(t.toLowerCase())).length;
+      const sameCategory = post.category && post.category === current.category ? 1 : 0;
+      return { post, score: sharedTags * 2 + sameCategory };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        new Date(b.post.date).getTime() - new Date(a.post.date).getTime(),
+    )
+    .slice(0, limit)
+    .map((entry) => entry.post);
+}
+
+/** All posts grouped by publication year, newest year (and post) first. */
+export function getPostsByYear(locale: string): Array<{ year: number; posts: PostMeta[] }> {
+  const byYear = new Map<number, PostMeta[]>();
+  for (const post of getAllPosts(locale)) {
+    const year = new Date(post.date).getFullYear();
+    const bucket = byYear.get(year);
+    if (bucket) bucket.push(post);
+    else byYear.set(year, [post]);
+  }
+  return [...byYear.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([year, posts]) => ({ year, posts }));
+}
+
 export function getAllCaseStudies(locale: string): PostMeta[] {
   const dir = getDir('case-studies', locale);
   if (!fs.existsSync(dir)) return [];

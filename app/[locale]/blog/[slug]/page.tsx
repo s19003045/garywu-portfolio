@@ -2,12 +2,13 @@ import { notFound } from 'next/navigation';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
-import { getPost, getAllPosts, getSeriesNav, type SeriesNavInfo } from '@/lib/mdx';
+import { getPost, getAllPosts, getSeriesNav, getRelatedPosts, type SeriesNavInfo, type PostMeta } from '@/lib/mdx';
 import { formatDate, readingTime } from '@/lib/utils';
 import { MDXRemote } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
 import { Tag } from '@/components/ui/Tag';
 import { SeriesNav } from '@/components/blog/SeriesNav';
+import { RelatedPosts } from '@/components/blog/RelatedPosts';
 import { tagHref } from '@/lib/tags';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { articleSchema, breadcrumbSchema } from '@/lib/structured-data';
@@ -47,6 +48,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ local
   if (!post) notFound();
   const cover = coverImage('blog', slug);
   const seriesNav = getSeriesNav(slug, locale);
+  const related = getRelatedPosts(slug, locale);
   return (
     <div className="max-w-6xl mx-auto px-6 py-20">
       <JsonLd data={articleSchema({ ...post, locale, slug, image: cover?.url ?? defaultSocialImage })} />
@@ -57,7 +59,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ local
           { name: post.title, url: `${siteConfig.url}/${locale}/blog/${slug}` },
         ])}
       />
-      <PostContent post={post} locale={locale} cover={cover} seriesNav={seriesNav} />
+      <PostContent post={post} locale={locale} cover={cover} seriesNav={seriesNav} related={related} />
     </div>
   );
 }
@@ -67,11 +69,13 @@ function PostContent({
   locale,
   cover,
   seriesNav,
+  related,
 }: {
   post: { title: string; date: string; description: string; tags: string[]; content: string };
   locale: string;
   cover: CoverImage | null;
   seriesNav: SeriesNavInfo | null;
+  related: PostMeta[];
 }) {
   const t = useTranslations('blog');
   const c = useTranslations('common');
@@ -146,6 +150,8 @@ function PostContent({
           <SeriesNav nav={seriesNav} />
         </div>
       )}
+
+      <RelatedPosts posts={related} locale={locale} />
     </>
   );
 }

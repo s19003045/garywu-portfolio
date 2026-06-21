@@ -2,10 +2,11 @@ import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
 import { getAllPosts, getAllCategories, getAllTags } from '@/lib/mdx';
 import { getSearchIndex } from '@/lib/search';
+import { Link } from '@/i18n/navigation';
 import { BlogSearch } from '@/components/blog/BlogSearch';
 import { CategoryBar } from '@/components/blog/CategoryBar';
 import { PopularTags } from '@/components/blog/PopularTags';
-import { PostList } from '@/components/blog/PostList';
+import { PaginatedPostList } from '@/components/blog/PaginatedPostList';
 import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
@@ -27,7 +28,22 @@ export default async function BlogPage({ params }: { params: Promise<{ locale: s
       <BlogSearch index={searchIndex} />
       <CategoryBar categories={categories} active="all" />
       <PopularTags tags={tags} />
-      <PostList posts={posts} locale={locale} />
+      <PaginatedPostList posts={posts} locale={locale} />
+      <ArchiveLink />
+    </div>
+  );
+}
+
+function ArchiveLink() {
+  const t = useTranslations('blog');
+  return (
+    <div className="mt-12 pt-8 border-t border-[var(--border)]">
+      <Link
+        href="/blog/archive"
+        className="text-sm font-mono text-[var(--fg-muted)] hover:text-[var(--accent)] transition-colors"
+      >
+        {t('view_archive')}
+      </Link>
     </div>
   );
 }

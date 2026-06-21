@@ -87,6 +87,11 @@
     "series_prev": "上一篇",
     "series_next": "下一篇",
     "series_view_all": "查看整個系列",
+    "load_more": "載入更多",
+    "related": "相關文章",
+    "archive_eyebrow": "封存",
+    "archive_headline": "依年份瀏覽全部文章",
+    "view_archive": "依年份瀏覽全部文章 →",
     "categories": {
       "go-notes": "Go 學習筆記",
       "webrtc-system": "WebRTC 與系統設計",
