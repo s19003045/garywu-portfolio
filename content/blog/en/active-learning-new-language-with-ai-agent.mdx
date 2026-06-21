@@ -1,0 +1,113 @@
+---
+title: "How to Learn a New Programming Language More Actively in the Age of AI Agents"
+date: "2026-06-22"
+order: 7
+description: "The entry point for learning a new language has changed, but responsibility for understanding has not. This article distills the method I used while learning Go with an AI agent."
+tags: ["Go", "AI Agent", "Learning Strategy", "Engineering Thinking", "Development Process"]
+---
+
+This closing article is where the whole series becomes reusable.
+
+By the time I reached this point, I realised I had not only learned some Go. I had also built a clearer method for learning unfamiliar technical systems with the help of an AI agent.
+
+The most important part of that method is simple:
+
+- why AI changes the starting point but not the learning endpoint
+- why smaller questions usually lead to better understanding
+- why validation matters more than elegant explanations
+- how to keep AI in the role of coach rather than replacement thinker
+
+## the entry point has changed, but the endpoint has not
+
+AI lets you begin from a different place.
+
+You can begin with a runnable project.
+You can begin with a first-pass architectural explanation.
+You can begin with an agent that helps point to the right files.
+
+But the endpoint has not changed that much.
+
+You still need to be able to:
+
+- read code with confidence
+- predict how it will behave
+- notice where your model is still weak
+- validate your assumptions against execution and output
+
+If those things are missing, then the code may exist, but the understanding is still incomplete.
+
+## why smaller questions created better learning
+
+One of the strongest patterns in this whole process was that smaller questions produced much better learning.
+
+Questions like these were far more useful than asking for a complete lecture:
+
+- why does this use `package main`
+- why does this map not need a mutex
+- who usually detects disconnect first
+- what is the difference between closing the socket and closing the send channel
+
+That pattern matters because AI can answer huge questions, but learners usually cannot absorb huge answers all at once.
+
+Smaller questions create a narrower feedback loop. That is where learning accelerates.
+
+## why validation mattered more than explanation
+
+Good explanations are useful. But explanation alone was never enough.
+
+The moment understanding started to feel solid was usually when I brought it back to something observable:
+
+- running the service
+- watching logs
+- seeing a disconnect path happen
+- encountering a port conflict error
+- checking whether my event timeline matched actual behavior
+
+That is why I keep coming back to the same distinction:
+
+AI can accelerate the formation of understanding.
+Validation is what stabilises it.
+
+## how to stop AI from becoming a replacement thinker
+
+This was probably the most important practical concern throughout the series.
+
+I did not want AI to become a machine that simply hands me plausible conclusions.
+
+The only way to avoid that was to keep myself active in the loop:
+
+- restate the idea in my own words
+- ask for correction when my explanation felt imprecise
+- return to the code and logs
+- preserve my misunderstandings long enough to learn from them
+
+That makes AI much more useful as a coach than as a substitute thinker.
+
+## the method I want to keep
+
+If I had to keep only the reusable method, it would look something like this:
+
+1. start from a real project or real problem
+2. ask the AI for the smallest useful reading entry point
+3. focus on one local question at a time
+4. restate your understanding in your own words
+5. let the AI correct your imprecision
+6. validate against code, logs, and runtime behavior
+7. turn the corrected understanding into notes you can reuse
+
+That sequence worked well for Go, but I do not think it is limited to Go.
+
+## what I most want to leave behind from this series
+
+If I reduce the series to one sentence, it would be this:
+
+**Let the AI help you find the entrance, but make sure you are the one who turns that entrance into understanding.**
+
+That is the posture I most want to keep in future learning.
+
+## English version note
+
+This English article now captures the main method of the Chinese version, though later refinements may still deepen examples and transitions.
+
+Previous: [Minimal Debugging: How I Used Logs to Understand a Go Service](/en/blog/minimal-debugging-go-with-logs)
+
