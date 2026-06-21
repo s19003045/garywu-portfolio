@@ -1,7 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
-import { CATEGORY_KEYS, type CategoryKey, isCategoryKey } from './taxonomy';
+import {
+  CATEGORY_KEYS,
+  type CategoryKey,
+  isCategoryKey,
+  type SeriesKey,
+  isSeriesKey,
+} from './taxonomy';
 
 export interface PostMeta {
   slug: string;
@@ -11,6 +17,8 @@ export interface PostMeta {
   tags: string[];
   /** Primary browsing bucket; one of the closed CATEGORY_KEYS. */
   category?: CategoryKey;
+  /** Optional series this post belongs to; one of the closed SERIES_KEYS. */
+  series?: SeriesKey;
   /** Optional ordering among posts with the same date (ascending; lower = earlier). */
   order?: number;
   /** Pin to the top of the case-study list. */
@@ -61,6 +69,19 @@ function readCategory(value: unknown, slug: string, locale: string): CategoryKey
   return value;
 }
 
+/**
+ * Read a post's optional `series`. Missing is normal (most posts aren't part of
+ * a series); only a present-but-unknown key warns.
+ */
+function readSeries(value: unknown, slug: string, locale: string): SeriesKey | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (!isSeriesKey(value)) {
+    console.warn(`[taxonomy] blog post "${locale}/${slug}" has unknown series "${value}"`);
+    return undefined;
+  }
+  return value;
+}
+
 export function getAllPosts(locale: string): PostMeta[] {
   const dir = getDir('blog', locale);
   if (!fs.existsSync(dir)) return [];
@@ -78,6 +99,7 @@ export function getAllPosts(locale: string): PostMeta[] {
         description: data.description ?? '',
         tags: data.tags ?? [],
         category: readCategory(data.category, slug, locale),
+        series: readSeries(data.series, slug, locale),
         order: typeof data.order === 'number' ? data.order : undefined,
       };
     })
@@ -104,6 +126,7 @@ export function getPost(slug: string, locale: string): Post | null {
     description: data.description ?? '',
     tags: data.tags ?? [],
     category: readCategory(data.category, slug, locale),
+    series: readSeries(data.series, slug, locale),
     order: typeof data.order === 'number' ? data.order : undefined,
     content,
   };
@@ -148,6 +171,47 @@ export function getAllCategories(locale: string): Array<{ key: CategoryKey; coun
     key,
     count: counts.get(key) ?? 0,
   }));
+}
+
+/** Reading order within a series: earliest date first, then `order` ascending. */
+function bySeriesReadingOrder(a: PostMeta, b: PostMeta): number {
+  const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+  if (dateDiff !== 0) return dateDiff;
+  const ao = a.order ?? Number.MAX_SAFE_INTEGER;
+  const bo = b.order ?? Number.MAX_SAFE_INTEGER;
+  return ao - bo;
+}
+
+/** Posts in a series, in reading order (part 1 first). */
+export function getSeries(series: SeriesKey, locale: string): PostMeta[] {
+  return getAllPosts(locale)
+    .filter((post) => post.series === series)
+    .sort(bySeriesReadingOrder);
+}
+
+export interface SeriesNavInfo {
+  series: SeriesKey;
+  /** Zero-based position of this post within the series. */
+  index: number;
+  total: number;
+  prev?: PostMeta;
+  next?: PostMeta;
+}
+
+/** Series context (position + neighbours) for a post, or null if it has none. */
+export function getSeriesNav(slug: string, locale: string): SeriesNavInfo | null {
+  const post = getAllPosts(locale).find((p) => p.slug === slug);
+  if (!post?.series) return null;
+  const ordered = getSeries(post.series, locale);
+  const index = ordered.findIndex((p) => p.slug === slug);
+  if (index === -1) return null;
+  return {
+    series: post.series,
+    index,
+    total: ordered.length,
+    prev: ordered[index - 1],
+    next: ordered[index + 1],
+  };
 }
 
 export function getAllCaseStudies(locale: string): PostMeta[] {

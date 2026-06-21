@@ -6,6 +6,7 @@ import {
   getAllCategories,
 } from '@/lib/mdx';
 import { siteConfig } from '@/lib/site';
+import { SERIES_KEYS } from '@/lib/taxonomy';
 
 const BASE_URL = siteConfig.url;
 const locales = siteConfig.locales;
@@ -70,11 +71,21 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }))
   );
 
+  const seriesEntries: MetadataRoute.Sitemap = locales.flatMap((locale) =>
+    SERIES_KEYS.map((key) => ({
+      url: `${BASE_URL}/${locale}/blog/series/${key}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as ChangeFreq,
+      priority: 0.6,
+    }))
+  );
+
   return [
     ...staticEntries,
     ...blogEntries,
     ...caseStudyEntries,
     ...categoryEntries,
+    ...seriesEntries,
     ...tagEntries,
   ];
 }

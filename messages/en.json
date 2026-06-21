@@ -82,11 +82,20 @@
     "search_placeholder": "Search posts…",
     "search_no_results": "No matching posts",
     "popular_tags": "Popular tags",
+    "series_eyebrow": "Series",
+    "series_part": "Part {index} of {total}",
+    "series_prev": "Previous",
+    "series_next": "Next",
+    "series_view_all": "View the whole series",
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",
       "ai-collaboration": "Working with AI",
       "career": "Career & Craft"
+    },
+    "series": {
+      "go-with-ai-agent": "Learning Go with an AI Agent",
+      "webrtc-poc": "WebRTC POC Series"
     }
   },
   "resume": {
