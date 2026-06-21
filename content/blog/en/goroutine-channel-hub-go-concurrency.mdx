@@ -4,6 +4,7 @@ date: "2026-06-21"
 order: 3
 description: "This article uses a WebRTC signaling server to make Go concurrency concrete: what goroutines are responsible for, what channels really carry, and why the room state does not need a mutex in this design."
 tags: ["Go", "AI Agent", "WebRTC", "Concurrency", "Channels"]
+category: "go-notes"
 ---
 
 This article focuses on one concrete question: why can a shared `rooms` map stay safe without a mutex in this server design?

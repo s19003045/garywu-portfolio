@@ -73,7 +73,13 @@
     "eyebrow": "Writing",
     "headline": "工程思考與觀察",
     "read_more": "閱讀全文",
-    "min_read": "分鐘閱讀"
+    "min_read": "分鐘閱讀",
+    "categories": {
+      "go-notes": "Go 學習筆記",
+      "webrtc-system": "WebRTC 與系統設計",
+      "ai-collaboration": "AI 協作",
+      "career": "職涯思考"
+    }
   },
   "resume": {
     "eyebrow": "Resume",

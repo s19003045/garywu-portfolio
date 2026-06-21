@@ -73,7 +73,13 @@
     "eyebrow": "Writing",
     "headline": "Engineering Thoughts & Observations",
     "read_more": "Read More",
-    "min_read": "min read"
+    "min_read": "min read",
+    "categories": {
+      "go-notes": "Learning Go",
+      "webrtc-system": "WebRTC & System Design",
+      "ai-collaboration": "Working with AI",
+      "career": "Career & Craft"
+    }
   },
   "resume": {
     "eyebrow": "Resume",

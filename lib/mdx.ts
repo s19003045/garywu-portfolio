@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
+import { type CategoryKey, isCategoryKey } from './taxonomy';
 
 export interface PostMeta {
   slug: string;
@@ -8,6 +9,8 @@ export interface PostMeta {
   date: string;
   description: string;
   tags: string[];
+  /** Primary browsing bucket; one of the closed CATEGORY_KEYS. */
+  category?: CategoryKey;
   /** Optional ordering among posts with the same date (ascending; lower = earlier). */
   order?: number;
   /** Pin to the top of the case-study list. */
@@ -41,6 +44,23 @@ function getDir(type: 'blog' | 'case-studies', locale: string) {
   return path.join(contentRoot, type, locale);
 }
 
+/**
+ * Read a post's `category`, validating it against the closed taxonomy.
+ * Warns (rather than throws) on a missing/unknown value so an in-progress draft
+ * never breaks the build — the warning is enough to catch drift in CI logs.
+ */
+function readCategory(value: unknown, slug: string, locale: string): CategoryKey | undefined {
+  if (value === undefined || value === '') {
+    console.warn(`[taxonomy] blog post "${locale}/${slug}" is missing a category`);
+    return undefined;
+  }
+  if (!isCategoryKey(value)) {
+    console.warn(`[taxonomy] blog post "${locale}/${slug}" has unknown category "${value}"`);
+    return undefined;
+  }
+  return value;
+}
+
 export function getAllPosts(locale: string): PostMeta[] {
   const dir = getDir('blog', locale);
   if (!fs.existsSync(dir)) return [];
@@ -57,6 +77,7 @@ export function getAllPosts(locale: string): PostMeta[] {
         date: data.date ?? '',
         description: data.description ?? '',
         tags: data.tags ?? [],
+        category: readCategory(data.category, slug, locale),
         order: typeof data.order === 'number' ? data.order : undefined,
       };
     })
@@ -82,6 +103,7 @@ export function getPost(slug: string, locale: string): Post | null {
     date: data.date ?? '',
     description: data.description ?? '',
     tags: data.tags ?? [],
+    category: readCategory(data.category, slug, locale),
     order: typeof data.order === 'number' ? data.order : undefined,
     content,
   };
