@@ -1,0 +1,110 @@
+---
+title: "The Signaling Event Flow: How join, signal, and leave Move Through the Go Server"
+date: "2026-06-22"
+order: 5
+description: "Using the simple scenario of A joining first, B joining later, and B leaving, this article maps the event flow behind `Inbound`, `Joined`, `Outbound`, and the core signaling path in the Go server."
+tags: ["Go", "AI Agent", "WebRTC", "WebSocket", "Event Flow"]
+---
+
+The most useful way I found to understand the signaling layer was not to start with every field definition. It was to start with a simple scenario and force myself to translate static structs into a dynamic event timeline.
+
+The scenario was small, but enough to explain almost everything that matters:
+
+1. A joins first
+2. B joins later
+3. A and B exchange signaling data
+4. B leaves
+
+Once that sequence became readable, the signaling server stopped feeling abstract.
+
+## why the message structs are separate
+
+One of the first useful questions here is why the server does not force everything into one outbound message shape.
+
+The answer becomes clearer once you read each struct through its role:
+
+- why `Inbound`, `Joined`, and `Outbound` are separate
+
+`Inbound` represents messages sent from the client to the server.
+`Joined` represents the special response that a newly joined client receives.
+`Outbound` represents the other event notifications the server can send.
+
+That split matters because `joined` is not just another event. It initializes the new participant's view of the room: who they are and who is already there.
+
+## what A and B receive, and why it matters
+
+If A joins an empty room first, A receives `joined` and the peers list is empty.
+
+If B joins afterwards, the server does two different things for two different reasons:
+
+- B receives `joined` with A in the `peers` list
+- A receives `peer-joined` telling A that B has arrived
+
+That distinction is important.
+
+B needs initialization state.
+A only needs change notification.
+
+Once I saw the event flow from that angle, the code stopped looking like a switch statement and started looking like a room coordination system.
+
+## why the server routes `signal` instead of interpreting it
+
+Another useful design decision here is that the server does not try to deeply interpret SDP or ICE payloads. It carries them as raw signaling content and forwards them to the intended peer.
+
+That means the server's responsibility stays narrow:
+
+1. identify the sender
+2. identify the target
+3. find the target inside the room
+4. forward the payload
+
+That boundary keeps the server focused on routing and room coordination rather than WebRTC content interpretation.
+
+## leave handling is about trust in room state
+
+The leave path may look simple, but it is critical.
+
+When B leaves, A should receive `peer-left`.
+That is not just a convenience message. It is part of keeping the room state trustworthy.
+
+If leave cleanup is wrong, join and signal flows later begin from stale assumptions about who is still present.
+
+That is why this article changed how I think about signaling servers. The hard part is not only “can messages be forwarded?” The harder part is “can room state remain trustworthy across joins, disconnects, and cleanup?”
+
+## why scenario questions helped so much
+
+One of the most useful AI-guided learning moves here was the use of scenario questions instead of endless explanation.
+
+Questions like these turned out to be far more effective than passive reading:
+
+- who receives what when B joins after A
+- what does A receive when B closes the tab
+- which message is only for the new peer and which one informs existing peers
+
+If I could answer those cleanly, I usually had a much stronger understanding than if I had only read the struct definitions.
+
+## what mattered most in this article
+
+If I had to reduce this article to one lesson, it would be this:
+
+**A signaling server becomes understandable when you stop reading it only as message formats and start reading it as room coordination over time.**
+
+That shift made the code far easier to reason about and made later debugging much more predictable.
+
+## if you want to learn this way too
+
+When you read signaling code in an unfamiliar language, it helps to ask:
+
+- which messages initialize a new participant
+- which messages only notify existing participants
+- which flows are point-to-point and which are room-wide
+- what stale state would break this design if leave cleanup failed
+- can I retell the full sequence as a seven-step event timeline
+
+## English version note
+
+This English article now carries the main conceptual path of the Chinese version, with room for later stylistic refinement.
+
+Previous: [The WebSocket Lifecycle: How readPump, writePump, and Cleanup Fit Together](/en/blog/websocket-readpump-writepump-lifecycle)
+
+Next: [Minimal debugging: how I used logs to understand a Go service](/en/blog/minimal-debugging-go-with-logs)

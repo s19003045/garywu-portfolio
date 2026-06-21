@@ -1,0 +1,154 @@
+---
+title: "signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動"
+date: "2026-06-22"
+order: 5
+description: "用 A 先進房、B 後進房、B 再離開的情境，理解 Go WebRTC signaling server 裡的 Inbound、Joined、Outbound 與 join、signal、leave 事件流。"
+tags: ["Go", "AI Agent", "WebRTC", "WebSocket", "事件流"]
+---
+
+前面幾篇比較像是在讀角色與生命週期。這篇開始，我想把一件事完整串起來：
+
+**一個 WebRTC signaling server，到底怎麼處理 join、signal、leave 這些事件。**
+
+這件事如果只從程式碼細節看，會很容易陷進 struct、欄位與函式裡。但如果改用情境去看，整條流程就清楚很多。
+
+如果你對 signaling server 的責任邊界還沒有感覺，建議先讀前導文：[讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼](/zh/blog/webrtc-poc-go-series-primer)。
+
+這篇的目標不是把 signaling 的所有背景知識補齊，而是把最核心的事件流講到可被預測。只要你開始能回答「A 先進房、B 後進房、B 離開時，各自會收到什麼」，這個 server 的主要協作邏輯其實就已經開始進入你的理解裡了。
+
+## 我最先抓住的情境：A 先進房、B 後進房、B 再離開
+
+這是一個很小，但足夠把整個 signaling server 看懂的情境。
+
+1. A 先進入房間
+2. B 再進入同一個房間
+3. A 與 B 交換 signal
+4. B 關閉分頁或離開
+
+如果能把這個情境講清楚，其實這個 server 的核心就差不多懂了。
+
+我很喜歡這種學法，因為它不像背 type 一樣抽象。它逼我把靜態 struct 和函式，轉成真的會發生在房間裡的事件順序。
+
+## 為什麼訊息 struct 要拆成 Inbound、Joined、Outbound
+
+一開始我看到幾個 struct 時，會很自然想問：為什麼不全部共用同一個結構？
+
+後來我發現，拆開反而讓意圖更清楚。
+
+- `Inbound` 是 client 傳進 server 的訊息
+- `Joined` 是 server 回給新加入者的 joined 訊息
+- `Outbound` 是其他一般事件，例如 `peer-joined`、`signal`、`peer-left`、`full`
+
+其中 `Joined` 特別獨立出來很關鍵。因為它除了 type 之外，還一定要帶自己的 `id` 與 `peers` 陣列。這跟一般單純通知事件的語意不一樣。
+
+這讓我第一次更有感：訊息結構不只是格式問題，而是在反映流程責任。
+
+對我來說，這也是從專案學語言的好處。你不是先問「Go struct 要怎麼寫」，而是先看到「這裡為什麼需要這三種不同訊息角色」，然後語法再回來服務理解。
+
+## A 先進房時，server 做了什麼
+
+當 A 先送出 `join`，Hub 會建立或找到對應房間。
+
+因為這時房裡還沒其他人，所以：
+
+- A 會收到 `joined`
+- `peers` 是空陣列
+
+這一步很重要，因為它建立了 A 對房間現況的第一份認知：我已加入，我的 id 是誰，現在房裡還沒其他成員。
+
+這種「先讓新加入者知道當前房間狀態」的設計，比單純回一個成功訊息更有用。
+
+## B 後進房時，為什麼 A 與 B 收到的訊息不同
+
+這是我覺得最適合拿來驗證理解的一段。
+
+當 B 進房時，Hub 會先取出原本房間裡的 members，整理成 `peers` 清單，再把 B 自己加入房間。
+
+所以這時：
+
+- B 會收到 `joined`，而且 `peers` 裡包含 A
+- A 會收到 `peer-joined`，知道 B 加入了
+
+這兩種訊息不是重複，而是針對不同角色給不同資訊。
+
+B 需要知道「房間裡本來有誰」，A 則只需要知道「剛剛有誰新進來了」。
+
+當我能用這個角度理解訊息差異時，server 的行為就不再只是 switch case，而是很像一套清楚的房間協調流程。
+
+這種視角的轉換很重要。因為它讓我之後看 log 時，不會只看到一堆 type，而是能直接在腦中還原「現在是誰剛加入、誰正在等 offer、誰只是被通知對方進來了」。
+
+## signal 的重點不是解析內容，而是把內容送對人
+
+接著是 `signal`。
+
+這裡我很喜歡這個設計的一點：server 不去理解 SDP 與 ICE candidate 的細節，而是把 `data` 當成 `RawMessage` 原樣轉發。
+
+這表示 server 在 signaling 這一層的責任很單純：
+
+1. 確認這個訊息是從哪個 peer 來
+2. 確認它要送給哪個 peer
+3. 在同一個 room 裡找到目標並轉發
+
+也就是說，Hub 在做的是 routing，而不是 negotiation 解讀。
+
+這個切法很漂亮，因為它把 server 的責任邊界保持得很清楚。
+
+而這種責任邊界一旦清楚，很多系統複雜度就會下降。因為你知道哪裡該負責管理房間、哪裡該負責媒體協商、哪裡只是純粹做轉送。
+
+## leave 事件讓整條生命週期閉合
+
+最後是 `leave`。
+
+當 B 離開時，Hub 會把它從房間移除，然後通知剩下的成員：
+
+- A 會收到 `peer-left`
+
+這一步看起來簡單，但它其實是整套 room 狀態可信不可信的關鍵。
+
+如果離線清理沒有做對，房間狀態就會慢慢漂掉。之後的 join、signal 都可能建立在錯誤的房間成員資訊上。
+
+所以我後來很認同這種看法：
+
+**signaling server 真正麻煩的地方，不只是能不能轉發訊息，而是房間生命週期能不能一直保持可信。**
+
+這句話對我來說是這篇最重要的收穫之一。因為它把我從「server 有沒有把訊息送出去」這種局部關心，拉到「整個房間狀態有沒有被維持在可信範圍內」這種系統層次的關心。
+
+## 用情境題檢查理解，比死背事件型別更有用
+
+這一段學習過程裡，我很喜歡 AI 使用的一種方式：不只解釋，而是一直出情境題要我回答。
+
+例如：
+
+- A 先進房、B 後進房，誰先收到什麼訊息？
+- B 關閉分頁後，A 會收到什麼？
+
+這種問題很好，因為它逼我把靜態程式碼轉成動態事件流。只要回答得出來，我通常就是真的懂了八成以上。
+
+這也是我很推薦把 AI 當教練而不是解說員的原因。當它開始出情境題，而不是只繼續講概念時，你就更容易知道自己是真的懂了，還是只是聽起來懂。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+看 signaling server 時，可以直接請 AI 幫你回答情境題：
+
+1. A 先進房、B 後進房，雙方各自收到哪些 type
+2. 哪種訊息只給新加入者，哪種是通知既有成員
+3. server 需不需要理解 signal data 的內容，為什麼
+4. 離開事件如果沒清理好，後果會是什麼
+
+這種問法很適合把程式碼轉成真正能消化的流程理解。
+
+如果你想更進一步，也可以再補問一句：請你幫我把這段流程改寫成 6 到 8 行事件時間線。這會非常有助於你從閱讀程式過渡到判讀 log。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. **signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動**
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+上一篇：[WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+
+下一篇：[最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
