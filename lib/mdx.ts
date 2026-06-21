@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
-import { type CategoryKey, isCategoryKey } from './taxonomy';
+import { CATEGORY_KEYS, type CategoryKey, isCategoryKey } from './taxonomy';
 
 export interface PostMeta {
   slug: string;
@@ -107,6 +107,47 @@ export function getPost(slug: string, locale: string): Post | null {
     order: typeof data.order === 'number' ? data.order : undefined,
     content,
   };
+}
+
+/** Posts for a locale carrying the given tag (case-insensitive match). */
+export function getPostsByTag(tag: string, locale: string): PostMeta[] {
+  const needle = tag.toLowerCase();
+  return getAllPosts(locale).filter((post) =>
+    post.tags.some((t) => t.toLowerCase() === needle),
+  );
+}
+
+/** All tags for a locale with their post counts, most-used first. */
+export function getAllTags(locale: string): Array<{ tag: string; count: number }> {
+  const counts = new Map<string, { tag: string; count: number }>();
+  for (const post of getAllPosts(locale)) {
+    for (const tag of post.tags) {
+      const key = tag.toLowerCase();
+      const entry = counts.get(key);
+      if (entry) entry.count += 1;
+      else counts.set(key, { tag, count: 1 });
+    }
+  }
+  return [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
+  );
+}
+
+/** Posts for a locale in the given category. */
+export function getPostsByCategory(category: CategoryKey, locale: string): PostMeta[] {
+  return getAllPosts(locale).filter((post) => post.category === category);
+}
+
+/** Categories present for a locale, in display order, with post counts. */
+export function getAllCategories(locale: string): Array<{ key: CategoryKey; count: number }> {
+  const counts = new Map<CategoryKey, number>();
+  for (const post of getAllPosts(locale)) {
+    if (post.category) counts.set(post.category, (counts.get(post.category) ?? 0) + 1);
+  }
+  return CATEGORY_KEYS.filter((key) => counts.has(key)).map((key) => ({
+    key,
+    count: counts.get(key) ?? 0,
+  }));
 }
 
 export function getAllCaseStudies(locale: string): PostMeta[] {

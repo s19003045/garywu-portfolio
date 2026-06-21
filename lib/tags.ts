@@ -51,3 +51,19 @@ export function tagKind(tag: string): TagKind {
 export function isTechTag(tag: string): boolean {
   return tagKind(tag) === 'tech';
 }
+
+/**
+ * "Broad" tags sit on a large share of posts, so they barely narrow a search.
+ * They stay clickable (a filter page still works), but are excluded from
+ * popular-tag surfaces so those highlight tags that actually discriminate.
+ */
+const BROAD_TAGS = new Set<string>(['工程思考', 'engineering thinking']);
+
+export function isBroadTag(tag: string): boolean {
+  return BROAD_TAGS.has(normalize(tag));
+}
+
+/** Locale-relative URL for a tag's filter page (safe for spaces / CJK / dots). */
+export function tagHref(tag: string): string {
+  return `/blog/tag/${encodeURIComponent(tag)}`;
+}

@@ -7,6 +7,7 @@ import { formatDate, readingTime } from '@/lib/utils';
 import { MDXRemote } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
 import { Tag } from '@/components/ui/Tag';
+import { tagHref } from '@/lib/tags';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { articleSchema, breadcrumbSchema } from '@/lib/structured-data';
 import { siteConfig } from '@/lib/site';
@@ -95,7 +96,7 @@ function PostContent({
 
         <div className="flex flex-wrap gap-2 mb-12">
           {post.tags.map((tag) => (
-            <Tag key={tag} label={tag} />
+            <Tag key={tag} label={tag} href={tagHref(tag)} />
           ))}
         </div>
       </div>

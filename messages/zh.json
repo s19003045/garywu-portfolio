@@ -74,6 +74,11 @@
     "headline": "工程思考與觀察",
     "read_more": "閱讀全文",
     "min_read": "分鐘閱讀",
+    "all": "全部",
+    "browse_by": "依分類瀏覽",
+    "all_posts": "← 所有文章",
+    "tag_eyebrow": "標籤",
+    "post_count": "{count} 篇文章",
     "categories": {
       "go-notes": "Go 學習筆記",
       "webrtc-system": "WebRTC 與系統設計",

@@ -74,6 +74,11 @@
     "headline": "Engineering Thoughts & Observations",
     "read_more": "Read More",
     "min_read": "min read",
+    "all": "All",
+    "browse_by": "Browse by category",
+    "all_posts": "← All posts",
+    "tag_eyebrow": "Tag",
+    "post_count": "{count, plural, =1 {# post} other {# posts}}",
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",
