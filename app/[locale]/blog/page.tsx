@@ -1,9 +1,10 @@
 import { getTranslations } from 'next-intl/server';
 import { useTranslations } from 'next-intl';
-import { getAllPosts, getAllCategories } from '@/lib/mdx';
+import { getAllPosts, getAllCategories, getAllTags } from '@/lib/mdx';
 import { getSearchIndex } from '@/lib/search';
 import { BlogSearch } from '@/components/blog/BlogSearch';
 import { CategoryBar } from '@/components/blog/CategoryBar';
+import { PopularTags } from '@/components/blog/PopularTags';
 import { PostList } from '@/components/blog/PostList';
 import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
@@ -18,12 +19,14 @@ export default async function BlogPage({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   const posts = getAllPosts(locale);
   const categories = getAllCategories(locale);
+  const tags = getAllTags(locale);
   const searchIndex = getSearchIndex(locale);
   return (
     <div className="max-w-6xl mx-auto px-6 py-20">
       <BlogHeader />
       <BlogSearch index={searchIndex} />
       <CategoryBar categories={categories} active="all" />
+      <PopularTags tags={tags} />
       <PostList posts={posts} locale={locale} />
     </div>
   );

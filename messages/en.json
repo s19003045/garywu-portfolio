@@ -81,6 +81,7 @@
     "post_count": "{count, plural, =1 {# post} other {# posts}}",
     "search_placeholder": "Search posts…",
     "search_no_results": "No matching posts",
+    "popular_tags": "Popular tags",
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",

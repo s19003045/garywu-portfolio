@@ -1,5 +1,10 @@
 import { MetadataRoute } from 'next';
-import { getAllPosts, getAllCaseStudies } from '@/lib/mdx';
+import {
+  getAllPosts,
+  getAllCaseStudies,
+  getAllTags,
+  getAllCategories,
+} from '@/lib/mdx';
 import { siteConfig } from '@/lib/site';
 
 const BASE_URL = siteConfig.url;
@@ -47,5 +52,29 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }))
   );
 
-  return [...staticEntries, ...blogEntries, ...caseStudyEntries];
+  const categoryEntries: MetadataRoute.Sitemap = locales.flatMap((locale) =>
+    getAllCategories(locale).map(({ key }) => ({
+      url: `${BASE_URL}/${locale}/blog/category/${key}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as ChangeFreq,
+      priority: 0.6,
+    }))
+  );
+
+  const tagEntries: MetadataRoute.Sitemap = locales.flatMap((locale) =>
+    getAllTags(locale).map(({ tag }) => ({
+      url: `${BASE_URL}/${locale}/blog/tag/${encodeURIComponent(tag)}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as ChangeFreq,
+      priority: 0.5,
+    }))
+  );
+
+  return [
+    ...staticEntries,
+    ...blogEntries,
+    ...caseStudyEntries,
+    ...categoryEntries,
+    ...tagEntries,
+  ];
 }
