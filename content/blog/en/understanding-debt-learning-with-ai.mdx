@@ -1,0 +1,78 @@
+---
+title: "Understanding Debt: When AI Makes Learning Fast — and Fooling Yourself Easy"
+date: "2026-06-23"
+description: "AI makes learning a new language faster than ever — and makes believing you've learned it easier than ever. This is the trap I kept dodging while learning Go with an AI agent: understanding debt, and why, once answers stop being scarce, judgement is what's scarce."
+tags: ["AI Collaboration", "Learning Strategy", "AI Agent", "Go", "Continuous Learning"]
+category: "ai-collaboration"
+---
+
+AI makes learning a new language faster than ever.
+
+Fast enough to be a little dangerous.
+
+Because it also makes believing you've learned it easier than ever.
+
+Recently I used an AI agent to learn Go almost from scratch, from a real WebRTC project. I wrote that up as a series — if you want the concrete walkthrough, start with the [series primer](/en/blog/webrtc-poc-go-series-primer). But after a full pass, the lesson most worth writing down had almost nothing to do with Go. It was a trap I kept dodging the whole way.
+
+I call it understanding debt.
+
+## Understanding debt is technical debt for learning
+
+Just like the technical debt every engineer knows:
+
+When AI produces a chunk of code that runs but you can't read, you didn't save time — you took out a loan.
+
+The interest comes due at the worst possible moment: usually when it breaks and you have no idea why.
+
+Runnable is not the same as understood.
+
+Understood is not the same as being able to judge where it will fail.
+
+## The most dangerous part is that AI's explanations are too smooth
+
+The sneakiest thing about this debt is how smooth AI's explanations are.
+
+Learning science has a name for it: the fluency illusion. The more clearly and smoothly information is presented, the more we overestimate how much we've actually learned.
+
+And AI happens to be about the smoothest explainer ever built.
+
+So the first thing I learned was this: the more it all looks obvious and the harder you're nodding along, the more you should force yourself to stop and ask —
+
+**"If I closed the AI right now, could I explain this myself?"**
+
+## Three moves that pay the debt down
+
+If that question is the alarm, these three moves are what actually pays the debt down. They showed up again and again while I learned Go; there's a version closer to the code in the [series wrap-up](/en/blog/active-learning-new-language-with-ai-agent), so here I'll just say why they work.
+
+**Ask smaller, not more.**
+I almost never ask "teach me all of Go." I ask "why does this use `package main`," or "why doesn't this `rooms map` need a lock." AI defaults to feeding you answers; it won't slow you down on its own. Making the question smaller is you supplying the discipline it won't.
+
+**Get it wrong first, then let it correct you.**
+I state my version — "here's what I think this does" — in my own words first, then let the AI poke holes in where I'd actually confused things. That "oh, that's where I had it wrong" moment is worth more than seeing the right answer first. Memory keeps the parts you generate yourself, not the parts you scroll past.
+
+**Take the answer back to reality and validate it.**
+Run the server, read the logs, break the connection on purpose and watch how it reacts. Understanding that lives only in a chat is floating; understanding calibrated against execution is what stands up.
+
+## What's scarce has changed hands
+
+In the end, this taught me something bigger.
+
+Answers used to be scarce — you had to dig through books, ask seniors, fall into your own pits. Now answers are infinite and arrive instantly. So the scarce thing has changed hands.
+
+What's scarce now is judgement: judging whether an answer is right, whether it fits where you are right now, and whether you actually understand it.
+
+In an era where producing plausible-looking content is nearly free, being able to validate and judge is the one moat no one can take from you.
+
+## In the end
+
+I only set out to learn Go. What I came away with was a posture better suited to this era:
+
+Start from a real problem, let AI break it into smaller pieces and speed up the feedback — but keep the final call, "do I actually understand this," firmly in your own hands.
+
+Don't resist AI, and don't deify it. Just put it back where it belongs: a powerful amplifier, not a replacement for understanding.
+
+If I had to compress it to one line:
+
+**Let AI help you find the entrance, then make that entrance into understanding yourself.**
+
+Next time you learn something with AI, it might be worth pausing to ask: this time, did I actually understand it — or did I just take on a little more understanding debt?
