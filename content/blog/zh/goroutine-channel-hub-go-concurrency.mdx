@@ -1,0 +1,146 @@
+---
+title: "goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼"
+date: "2026-06-21"
+order: 3
+description: "我原本不熟 Go 的併發模型。這篇用 WebRTC signaling server 的 Hub 架構，把 goroutine、channel、select 與不用 mutex 的原因連回真實程式。"
+tags: ["Go", "AI Agent", "WebRTC", "Concurrency", "channel"]
+---
+
+學 Go 時，最容易讓人又期待又焦慮的，通常就是併發模型。
+
+你會很快聽到幾個關鍵字：goroutine、channel、select、share memory by communicating。
+
+如果只看名詞，它們很像一套需要額外背起來的理論。但這次我比較幸運，因為我不是在抽象範例裡看它們，而是在一個真實的 WebRTC signaling server 裡看它們怎麼一起工作。
+
+如果你還不熟這個專案的 phase 結構與 Phase 4 的定位，建議先補這篇前導文：[讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼](/zh/blog/webrtc-poc-go-series-primer)。
+
+這篇的目標不是替 Go 併發下完整定義，而是把一個初學者最常卡住的問題，拉回具體程式情境：為什麼這裡會有多個 goroutine？為什麼事件要走 channel？為什麼 `rooms map` 不需要 mutex？
+
+如果這三件事能先講清楚，很多看起來很抽象的 Go 併發概念，就會突然變得很具體。
+
+## 一開始我真正不懂的是什麼
+
+我第一個卡住的點不是 goroutine 的定義，而是這個問題：
+
+**為什麼這個專案裡的 `rooms map` 可以不用 mutex？**
+
+如果換成我比較熟的語言直覺，看到很多連線同時加入、離開、轉發訊息，我會很自然地想到「那這個共享狀態不是應該要鎖嗎？」
+
+也因為這個問題夠具體，AI 比較能直接把我帶到真正重要的地方。
+
+我後來愈來愈相信，學新語言時最有價值的問題，通常不是「請完整解釋某個主題」，而是這種能直接對到一段真實程式責任的問題。
+
+## 先不要急著背理論，先看角色切分
+
+這個 Go server 的併發設計可以先簡化成三個角色：
+
+1. 每條 WebSocket 連線有一個 `readPump`
+2. 每條 WebSocket 連線有一個 `writePump`
+3. 整個系統有一個 `Hub.Run()` 負責處理房間狀態
+
+當 AI 先把這三個角色切出來後，我才第一次比較清楚：這不是所有 goroutine 一起去碰同一個 map，而是把責任刻意拆開。
+
+這種角色切分對初學者很重要，因為它讓我先看到架構，再回頭理解語法。不是先背完名詞後才試圖拼回去，而是先知道這些名詞各自在架構裡佔什麼位置。
+
+## goroutine 在這裡不是炫技，而是角色分工
+
+我後來比較能用自己的話描述 goroutine 在這個專案裡的用途：
+
+- `readPump` 專門從 socket 讀資料
+- `writePump` 專門把資料寫回 socket
+- `Hub.Run()` 專門處理共享狀態與事件
+
+也就是說，goroutine 在這裡不是「為了很潮地平行處理」，而是為了把責任分開，讓每個角色只做一件核心事情。
+
+這種理解方式比單純背「goroutine 很輕量」對我更有幫助，因為它直接回答了：**為什麼這裡要用 goroutine。**
+
+對我來說，這也是這篇最想示範的讀法：遇到抽象概念時，先問它在這個系統裡扮演什麼角色，而不是先背理論定義。
+
+## channel 讓事件進入單一控制中心
+
+接著是 channel。
+
+我一開始比較直覺的理解是：channel 就是 goroutine 之間傳遞訊息的方式。這沒有錯，但太寬了。
+
+在這個專案裡，真正重要的是：
+
+- `readPump` 讀到訊息後，丟到 `hub.inbound`
+- 連線結束時，把自己送到 `hub.unregister`
+- Hub 用 `select` 依序處理這些事件
+
+這時我才比較看懂，channel 在這裡的功能不是單純「傳資料」，而是把所有共享狀態的變更都導向同一個控制中心。
+
+換句話說，channel 幫忙建立的是一條**狀態變更的單一路徑**。
+
+## select 讓 Hub 一次處理一個事件
+
+`select` 的存在，讓 `Hub.Run()` 可以同時等待不同 channel 的事件：
+
+- 有人離線
+- 有人送來訊息
+
+我一開始曾經把重點放在 `for` 迴圈，好像是因為 `for` 讓它一次只做一件事。
+
+後來修正後，我比較清楚真正的重點不是 `for` 本身，而是：
+
+**整個 `rooms` 狀態只由 `Hub.Run()` 這一個 goroutine 擁有與修改。**
+
+這就是為什麼它可以不用 mutex。
+
+不是因為 Go 自動幫你保證 map 安全，也不是因為 `for` 很神奇，而是因為架構上根本不讓多個 goroutine 同時直接去動它。
+
+## 我第一次真的理解「share memory by communicating」
+
+以前看到這句話，我其實知道它大概是 Go 很常見的哲學，但沒有真的消化。
+
+這次在專案裡，它終於比較落地了。
+
+它不是說「永遠不要用記憶體共享」，也不是某種口號。而是說：
+
+如果你能把狀態集中由單一 goroutine 管理，再讓其他 goroutine 透過 channel 把事件送進來，那很多原本要靠鎖處理的複雜度，就可以被架構本身吃掉。
+
+這個專案的 `Hub` 就是一個很好的範例。
+
+當我真正把這段理解講順之後，Go 併發對我來說就不再只是新語言特色，而是一種清楚的狀態管理策略。
+
+## 這篇對我的真正價值
+
+如果只從知識點來看，這篇是在學：
+
+- goroutine
+- channel
+- select
+- mutex 為什麼這裡不需要
+
+但對我來說更重要的是另一件事：
+
+我開始理解，學一個新語言的高價值部分，往往不是把所有概念背完，而是把**一個概念放進對的架構位置**。
+
+只要位置對了，很多定義就不再只是考試題，而是能反推程式為什麼這樣設計。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+遇到 Go 的併發程式，不要一開始就請 AI 講完整理論。可以先問：
+
+1. 這裡有哪些 goroutine，各自負責什麼
+2. 哪個 goroutine 擁有共享狀態
+3. channel 在這個專案裡到底傳的是什麼事件
+4. 為什麼這裡不用 mutex
+
+這種問法會讓併發概念更快落到真實程式上。
+
+如果你也在學新的後端語言，我很推薦你刻意練習這種問法。因為它會逼你從「會背名詞」轉向「能辨識架構責任」。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. **goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼**
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+上一篇：[先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+
+下一篇：[WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)

@@ -1,0 +1,116 @@
+---
+title: "goroutines, Channels, and the Hub: The First Time Go Concurrency Really Made Sense to Me"
+date: "2026-06-21"
+order: 3
+description: "This article uses a WebRTC signaling server to make Go concurrency concrete: what goroutines are responsible for, what channels really carry, and why the room state does not need a mutex in this design."
+tags: ["Go", "AI Agent", "WebRTC", "Concurrency", "Channels"]
+---
+
+This article focuses on one concrete question: why can a shared `rooms` map stay safe without a mutex in this server design?
+
+That question mattered to me much more than a generic definition of goroutines or channels. If I could answer that one thing clearly, I would probably understand something real about Go's concurrency model instead of just collecting new vocabulary.
+
+What helped me most was not starting with theory. It was starting with role boundaries inside the real program.
+
+In this server, the architecture can be reduced to three main actors:
+
+1. each client connection has a `readPump`
+2. each client connection has a `writePump`
+3. a single `Hub.Run()` loop owns room state
+
+Once those three roles were visible, the rest of the concurrency model started to feel much less mysterious.
+
+## goroutines became useful when they stopped feeling abstract
+
+At first, it is easy to think of goroutines as “lightweight threads.” That is not wrong, but it is also not very helpful when you are trying to read a real project.
+
+In this codebase, goroutines became useful to me when I started seeing them as responsibility units:
+
+- `readPump` reads from the socket
+- `writePump` writes to the socket and handles heartbeat
+- `Hub.Run()` owns shared room state and reacts to incoming events
+
+That interpretation gave me something more concrete than runtime theory. It answered a much more practical question: why are there separate concurrent paths here at all?
+
+## channels matter because they stop state from being touched everywhere
+
+The next important shift came from understanding channels in context.
+
+The simplest explanation is that channels move data between goroutines. Again, that is true, but too broad to explain why this design works.
+
+In this server, channels create a single route into shared state changes:
+
+- `readPump` sends inbound messages into `hub.inbound`
+- disconnect paths send clients into `hub.unregister`
+- `Hub.Run()` receives those events and mutates room state in one place
+
+That design choice is the real key.
+
+The system is not making the `rooms` map concurrent-safe by letting everyone touch it carefully. It is making the map safe by ensuring that everyone else stops touching it directly.
+
+## why the `rooms` map does not need a mutex
+
+This was the question that unlocked the rest for me.
+
+The answer is not “because Go maps are magically safe.” They are not.
+
+The answer is also not “because a `for` loop somehow guarantees it.” It does not.
+
+The real reason is architectural: the `rooms` map is only mutated by the single `Hub.Run()` goroutine.
+
+That means concurrency exists at the level of event production, not at the level of direct map mutation.
+
+Many goroutines can create events.
+One goroutine owns the state transition.
+
+Once I understood that distinction, the absence of a mutex stopped looking strange.
+
+## `select` became much easier when I thought in events
+
+`select` can look intimidating when it is presented as syntax.
+
+In this project it is much easier to read as an event loop:
+
+- sometimes a client unregisters
+- sometimes a client sends an inbound message
+
+The Hub does not poll all rooms constantly. It just waits for meaningful events and reacts to them one at a time.
+
+That is a much simpler mental model than trying to read `select` as an exotic language feature.
+
+## the first time “share memory by communicating” actually meant something
+
+Before this project, I understood that phrase only loosely.
+
+Here it finally became concrete.
+
+It does not mean “never share anything.”
+It means that if state ownership is concentrated and communication paths are explicit, you can avoid a lot of locking complexity by design.
+
+That is exactly what the Hub is doing here.
+
+## what mattered most in this article
+
+If I reduce the lesson of this article to one sentence, it would be this:
+
+**The value of Go concurrency in this project is not only that things run at the same time. It is that responsibility boundaries become clearer and shared state stops being touched from everywhere.**
+
+That is the point where goroutines, channels, and `select` stopped feeling like terminology and started feeling like architecture.
+
+## if you want to learn this way too
+
+When you meet Go concurrency in a real codebase, these are better first questions than “please explain goroutines in general”:
+
+- which goroutine owns shared state
+- which goroutines only handle I/O
+- what events travel through which channels
+- why is this design safe without a mutex
+- what architectural boundary is each goroutine enforcing
+
+## English version note
+
+This English article now covers the full conceptual arc of the Chinese version, though future revisions may still improve wording and examples.
+
+Previous: [Read the Project Before Memorising Syntax: How I Started Learning Go from a WebRTC Codebase](/en/blog/learn-go-from-real-project-entrypoint)
+
+Next: [The WebSocket lifecycle: how `readPump`, `writePump`, and cleanup fit together](/en/blog/websocket-readpump-writepump-lifecycle)
