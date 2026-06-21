@@ -1,0 +1,158 @@
+---
+title: "How I Use an AI Agent as a Go Coach, Not Just a Code Generator"
+date: "2026-06-20"
+order: 1
+description: "Go is still a new language to me. This series does not start with a textbook. It starts with real project code generated and explained with an AI agent, then turns that interaction into a structured learning process."
+tags: ["Go", "AI Agent", "Learning Strategy", "WebRTC", "Engineering Thinking"]
+---
+
+Go is still a new language to me.
+
+This series is not meant to be a full Go course. It is a practical learning record built around a real WebRTC project and a simple question: how should an engineer learn a new language in the age of AI agents?
+
+If I had approached this the old way, I probably would have started with a Go book, a tutorial series, and a gradual path through syntax, examples, and toy exercises. There is nothing wrong with that approach. It is still valuable. But it usually costs a lot of front-loaded time, and it can feel far away from the way engineers actually meet new languages at work.
+
+In real projects, the codebase is already there. The problem is already there. The delivery pressure is already there. What I often need is not complete mastery on day one. I need a reliable way to build enough understanding to read, reason, debug, and keep moving.
+
+That is why I wanted this series to be about more than Go itself. I wanted it to capture a way of learning with AI that stays active, deliberate, and grounded in real code.
+
+## Who this series is for
+
+This series is probably most useful if you are in one of these situations:
+
+- you already work as an engineer, but Go is still unfamiliar to you
+- you want to learn from a real codebase instead of isolated examples
+- you already use AI agents, but do not want to treat them as pure code factories
+- you want to see how questioning, verification, and debugging can become part of the learning process itself
+
+If what you want is a full Go curriculum, this will not replace one.
+
+If what you want is a realistic, repeatable learning path for a new language in modern engineering work, that is much closer to what this series is trying to offer.
+
+## What this article is about
+
+This opening article sets up the method behind the series:
+
+- why I did not start from a traditional Go textbook
+- why I used an AI agent as a programming coach
+- what I expect from this learning process
+- what readers should and should not expect from the series
+
+At the center of it is one idea: AI changes the entry point, but it does not remove the learner's responsibility.
+
+It can give me runnable code faster.
+It can give me a first-pass explanation faster.
+It can point me to the most relevant files faster.
+
+But it cannot place understanding in my head for me.
+
+## Why I did not want to start with a textbook
+
+Traditional learning paths usually optimise for completeness.
+
+That has clear benefits, but it also creates friction for working engineers. When a language is new, the first thing I often need is not complete coverage. I need orientation.
+
+I need to know:
+
+- where the program starts
+- which files matter first
+- who owns state
+- how data moves
+- which concept I should understand next
+
+AI agents are very good at helping with that first layer of orientation. They can reduce the distance between “I have no entry point” and “I can now ask a precise question about a real piece of code.”
+
+That shift matters a lot.
+
+## What I want to keep from the process
+
+I do not only want to preserve polished conclusions.
+
+I also want to preserve:
+
+- where I misunderstood a concept at first
+- how I asked follow-up questions
+- how the AI corrected my mental model
+- how I verified my understanding with code and logs
+
+That process matters, because the value is not only in getting an answer. It is in turning the answer into understanding.
+
+That is also why I do not want to simply paste raw AI conversations into articles.
+
+What matters is not the full transcript. What matters is the part where understanding actually changed:
+
+- why I got stuck
+- what I asked next
+- what was still too vague in the first answer
+- what became clearer after correction and validation
+
+If the process stays visible, the article becomes more than a conclusion. It becomes a learning model other people can reuse.
+
+## How I am using the AI agent in this series
+
+In this project, I am not treating the AI as an automatic answer machine.
+
+I am using it more like a programming coach.
+
+That means I ask it to do things like:
+
+- identify the smallest useful reading entry point
+- explain one local concept in the context of the real project
+- correct my wording when my understanding is directionally right but imprecise
+- turn control flow into an event timeline
+- suggest the cheapest validation step after a code or understanding change
+
+That is a very different posture from simply saying “write the code for me.”
+
+It also changes what I need to do as the learner. I have to answer back. I have to restate what I think I understood. I have to validate it. I have to notice when I am only half-convinced.
+
+That is where the real learning happens.
+
+## What this series is, and what it is not
+
+This series is:
+
+- a practical record of learning Go from a real WebRTC signaling server
+- a study of how to use an AI agent as a coach rather than a substitute thinker
+- a way of connecting language concepts back to architecture, logs, and runtime behavior
+
+This series is not:
+
+- a full Go reference
+- a textbook-style introduction to every part of the language
+- a dump of unedited AI conversation transcripts
+- a detached collection of syntax notes with no system context
+
+That distinction matters, because I want readers to know what kind of value to expect here.
+
+## What the rest of the series will cover
+
+The later articles will move through seven practical steps:
+
+1. learning from a real project entry point
+2. understanding goroutines, channels, and the Hub model
+3. reading the lifecycle of a WebSocket connection
+4. following join, signal, and leave event flow
+5. using minimal logs to debug a Go service
+6. extracting a repeatable learning method from the whole process
+
+Each article is meant to do two things at once:
+
+1. explain one concrete Go or systems concept through a real project
+2. show how that concept became understandable through AI-guided interaction, correction, and validation
+
+## The question behind the whole series
+
+If I had to reduce the whole project to one question, it would be this:
+
+**In the age of AI agents, how do we learn a new programming language more actively, instead of merely receiving answers?**
+
+That question is larger than Go.
+
+It applies to new frameworks, unfamiliar infrastructure, and inherited codebases. Go just happens to be the concrete training ground for this series.
+
+## English version note
+
+This English article now matches the core structure of the Chinese version, but the series may still continue to evolve as the later English articles are expanded.
+
+Next: [Read the project before memorising syntax: how I started learning Go from a WebRTC codebase](/en/blog/learn-go-from-real-project-entrypoint)
