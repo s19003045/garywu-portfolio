@@ -8,10 +8,11 @@ export interface PostMeta {
   date: string;
   description: string;
   tags: string[];
+  /** Optional ordering among posts with the same date (ascending; lower = earlier). */
+  order?: number;
   /** Pin to the top of the case-study list. */
   featured?: boolean;
   /** Manual ordering among featured items (ascending; lower = first). */
-  order?: number;
 }
 
 export interface Post extends PostMeta {
@@ -19,6 +20,22 @@ export interface Post extends PostMeta {
 }
 
 const contentRoot = path.join(process.cwd(), 'content');
+
+function shouldIncludeFuturePosts() {
+  if (process.env.SHOW_FUTURE_POSTS === 'true') return true;
+  if (process.env.SHOW_FUTURE_POSTS === 'false') return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+function isPublished(date: string) {
+  if (shouldIncludeFuturePosts()) return true;
+  if (!date) return true;
+
+  const publishedAt = new Date(`${date}T23:59:59.999Z`);
+  if (Number.isNaN(publishedAt.getTime())) return true;
+
+  return publishedAt.getTime() <= Date.now();
+}
 
 function getDir(type: 'blog' | 'case-studies', locale: string) {
   return path.join(contentRoot, type, locale);
@@ -40,9 +57,17 @@ export function getAllPosts(locale: string): PostMeta[] {
         date: data.date ?? '',
         description: data.description ?? '',
         tags: data.tags ?? [],
+        order: typeof data.order === 'number' ? data.order : undefined,
       };
     })
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    .filter((post) => isPublished(post.date))
+    .sort((a, b) => {
+      const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      const ao = a.order ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.order ?? Number.MAX_SAFE_INTEGER;
+      return bo - ao;
+    });
 }
 
 export function getPost(slug: string, locale: string): Post | null {
@@ -50,12 +75,14 @@ export function getPost(slug: string, locale: string): Post | null {
   if (!fs.existsSync(filePath)) return null;
   const raw = fs.readFileSync(filePath, 'utf-8');
   const { data, content } = matter(raw);
+  if (!isPublished(data.date ?? '')) return null;
   return {
     slug,
     title: data.title ?? slug,
     date: data.date ?? '',
     description: data.description ?? '',
     tags: data.tags ?? [],
+    order: typeof data.order === 'number' ? data.order : undefined,
     content,
   };
 }
