@@ -1,0 +1,192 @@
+---
+title: "先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go"
+date: "2026-06-20"
+order: 2
+description: "Go 對我來說是新語言。這篇不從語法書開始，而是直接從一個可執行的 WebRTC 專案入口，學 package main、func main、pointer、struct 與程式進入點。"
+tags: ["Go", "AI Agent", "WebRTC", "學習方法", "程式導讀"]
+---
+
+如果一門語言對你來說是新的，第一個問題通常不是「語法是什麼」，而是：**我該從哪裡開始看，才不會一下子被程式淹沒。**
+
+這次學 Go，我決定反過來做。
+
+我不先從語法表開始，而是先看這個 WebRTC 專案怎麼跑起來。因為只要先抓到進入點、主要角色與資料流，後面的語法就比較容易有落點。
+
+如果你還不知道這個 WebRTC POC 的整體背景，建議先讀前導文：[讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼](/zh/blog/webrtc-poc-go-series-primer)。
+
+這篇的目的也很明確：不是把 Go 語法一次講完，而是示範一種更實際的第一輪讀法。讓你即使對 Go 還不熟，也能先把專案看進去。
+
+## 先把專案背景講清楚，後面的程式才看得懂
+
+這個專案不是單純的 Go 練習題，而是一個 WebRTC POC 的第四階段。前面幾個 phase 已經先把 1 對 1、多人 mesh、React 前端等基礎鋪好；到了 Phase 4，才把原本的 Node signaling server 改寫成 Go。
+
+所以這篇在看的，不是一個從零開始的完整產品，而是：
+
+- 前端已經存在，而且沿用 `phase-3/client`
+- Go server 的責任主要是處理 WebSocket 信令
+- 真正的學習焦點是 Go 怎麼接住這些連線、事件與房間狀態
+
+如果你原本不知道 signaling server 是做什麼的，可以先用最簡單的理解方式記住：
+
+它不是直接轉送影音流，而是幫瀏覽器之間交換「我要跟誰連線」以及「建立連線需要的資訊」。
+
+這就是為什麼後面會一直看到 `join`、`signal`、`leave`。它們不是任意命名，而是這個系統最核心的事件。
+
+## 如果你想跟著文章一起對照完整檔案，先看這幾個位置
+
+很多時候讀不懂，不是因為 Go 太難，而是因為你不知道該打開哪個檔案先看。
+
+如果你想跟著這篇一起讀，我建議閱讀順序是：
+
+1. [Repo 總覽 README](https://github.com/s19003045/webrtc-poc/blob/main/README.md)
+2. [Phase 4 README](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/README.md)
+3. [phase-4/server/main.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/main.go)
+4. [phase-4/server/hub.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/hub.go)
+5. [phase-4/server/client.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/client.go)
+6. [phase-4/server/message.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/message.go)
+
+你也可以先把 Phase 4 server 縮成下面這張極簡地圖：
+
+```text
+phase-4/server/
+├─ main.go      # 建立 Hub、升級 WebSocket、啟動 client goroutine
+├─ hub.go       # 管理 rooms map，處理 join / signal / leave
+├─ client.go    # 每條連線的 readPump / writePump
+└─ message.go   # 前後端溝通的訊息 struct
+```
+
+這張地圖的重點不是完整，而是讓你在讀到某段程式時，知道自己正在看的是：入口、狀態中心、連線生命週期，還是訊息格式。
+
+## 先抓最外層輪廓
+
+AI agent 一開始沒有直接跟我講一堆 Go 語法，而是先帶我看幾個最小錨點：
+
+- `package main`
+- `func main()`
+- `import`
+- `&Client{...}`
+- `go hub.Run()`
+
+這種切法對初學者很有幫助，因為它先回答的是「這個程式怎麼開始、有哪些主要角色」，而不是把你丟進一堆零散語法裡。
+
+如果換成更白話的說法，第一輪閱讀我真正想先回答的是三件事：
+
+1. 程式從哪裡開始
+2. 誰在持有主要狀態
+3. 資料大致從哪裡進、往哪裡送
+
+只要這三件事有了輪廓，後面的語法細節就不再是孤立知識點。
+
+## package main 與 func main 先回答的是執行入口
+
+我一開始的理解是：`package main` 代表這個檔案是程式進入點，`func main()` 是 `main.go` 的執行入口。
+
+這個理解方向大致正確，但還不夠精準。
+
+後來 AI 幫我校正了一個很重要的細節：
+
+- `package main` 代表這是一個可執行程式套件
+- 真正的進入點是 `func main()`
+- `func main()` 不一定非得放在 `main.go`，只要它位在同一個 `package main` 裡就可以
+
+這個修正很重要。因為它不是只在補一個知識點，而是在訓練我：**不要只停在「好像懂了」，要繼續追到概念邊界更清楚為止。**
+
+這也是我覺得用 AI 學新語言時很值得刻意練習的一點。AI 最好用的地方，不只是先給答案，而是讓你能快速把「差不多懂」推進到「說法已經夠精準」。
+
+## pointer 不是抽象名詞，而是共享同一份狀態
+
+接著我看到這樣的初始化方式：
+
+```go
+client := &Client{
+  id:   newID(),
+  hub:  hub,
+  conn: conn,
+  send: make(chan []byte, sendBuffer),
+}
+```
+
+我當時的第一版理解是：`&Client` 是指標，好處是可以讓後面的兩個 goroutine 共用同一個 `client`。
+
+這個方向是對的，但我的描述又太模糊。我把指標講成「指向記憶體所有位置」，這其實不精準。
+
+後來被校正後，我比較能用自己的話說：
+
+**pointer 是指向某一個值的位址。**
+
+在這個情境裡，它的實際價值不是理論定義，而是 `readPump` 和 `writePump` 拿到的是同一個 `*Client`。也就是說，兩個 goroutine 都在看同一份連線狀態，而不是各自拷貝一份。
+
+這就是我覺得從專案學語言最有幫助的地方：概念不是抽象停留在名詞，而是立刻綁到行為上。
+
+## go 關鍵字讓我第一次把「並行執行」看見
+
+再往下看，我很快碰到兩行：
+
+```go
+go hub.Run()
+go client.writePump()
+go client.readPump()
+```
+
+如果先不管 Go 的完整定義，只看這三行，我至少先理解一件事：
+
+這個程式不是照單一路徑往下執行，而是把幾個角色分開各自跑。
+
+AI 沒有急著先把 goroutine 的所有背景知識講完，而是先讓我抓到：
+
+- `hub.Run()` 是整個房間狀態的中心
+- 每條連線各自有 `readPump` 與 `writePump`
+
+也就是說，我先看懂的是「角色切分」，而不是先背「goroutine 是由 runtime 管理的輕量執行單位」這類定義。這樣的順序，對專案型學習非常重要。
+
+因為當概念先被綁回角色，你之後再補理論時，吸收速度會快很多。
+
+## 先讀懂角色，比先背語法有用
+
+如果我一開始先去背 Go 的所有型別、宣告、切片、map、method、interface，我當然也可以慢慢學起來。但在這個專案脈絡下，更有用的順序其實是：
+
+1. 先知道誰在控制整個狀態
+2. 先知道每條連線有哪幾個責任
+3. 先知道資料從哪裡進、往哪裡送
+4. 再回頭補語法細節
+
+這個順序讓我比較不會在第一天就掉進語法細節裡，卻不知道整個程式到底在做什麼。
+
+對我來說，這其實就是這篇最想傳達的方法：第一輪閱讀不是為了精通，而是為了建立可以繼續往下學的地圖。
+
+## 這篇我真正學到的是什麼
+
+如果只看表面，這篇像是在學 `package main`、`func main`、pointer 與 `go` 關鍵字。
+
+但我覺得更重要的是，我開始建立一個新的閱讀順序：
+
+**當一門語言是新的，先從可執行專案的進入點開始，先抓角色與資料流，再回頭補語法。**
+
+這種做法讓 AI agent 不只是解釋名詞，而是幫我在一個真實程式裡找到可以下手的起點。
+
+這也是我目前很認同的一種學習順序：先求可讀，再求完整；先求能判斷，再求能背誦。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+如果你面前也有一個陌生語言的專案，可以先不要問「請完整教我這門語言」，而是先問：
+
+1. 這個專案從哪裡開始執行
+2. 最重要的 2 到 3 個角色是什麼
+3. 哪幾行程式最值得我先看
+4. 我對這段的理解哪裡還不夠精準
+
+這種問法比起泛泛地請 AI 上課，更容易把學習拉回真實程式與真實問題。
+
+如果你真的準備照這種方式學，我會建議你在每次問完之後，再補一個動作：用自己的話重新講一次你目前理解了什麼。很多模糊地帶，都是在這一步才會被自己看見。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. **先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go**
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+下一篇：[goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)

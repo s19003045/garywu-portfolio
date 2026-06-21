@@ -1,0 +1,140 @@
+---
+title: "Read the Project Before Memorising Syntax: How I Started Learning Go from a WebRTC Codebase"
+date: "2026-06-20"
+order: 2
+description: "Instead of starting with a Go syntax guide, I started from a runnable WebRTC project. This article outlines the first reading pass: entry point, main roles, pointers, and the smallest useful control flow."
+tags: ["Go", "AI Agent", "WebRTC", "Learning Strategy", "Code Reading"]
+---
+
+When a language is new, the first useful question is often not “what is the syntax?” but “where do I start reading so I do not get lost?”
+
+That question sounds simple, but it matters a lot. The first pass through a new codebase often determines whether you build momentum or just accumulate confusion.
+
+When I started learning Go through a WebRTC signaling server, I deliberately chose not to begin with a syntax guide. I began with the runnable project itself.
+
+The goal was not to understand everything. The goal was to build a reliable first map.
+
+This article sketches the first pass I used:
+
+- find `package main` and `func main()`
+- identify the key roles such as `Hub` and `Client`
+- locate the smallest meaningful data flow
+- understand why pointers matter in this specific program
+
+That first pass turned out to be much more useful than trying to absorb the language as a complete abstract system.
+
+## The goal of the first pass
+
+The goal is not mastery.
+
+The goal is to build a map that lets the next round of learning become more precise.
+
+In practice, I wanted the first reading round to answer just three questions:
+
+1. where does the program start
+2. who owns the main state
+3. where does data come in and where does it go next
+
+Once those three questions had rough answers, later concepts stopped feeling isolated.
+
+## Why the entry point matters more than early completeness
+
+The first useful anchor in this project was `package main` and `func main()`.
+
+At first, I described them in an oversimplified way: I thought `package main` meant this file itself was the entry point, and `func main()` was the execution entry point of `main.go` specifically.
+
+That was close, but not precise enough.
+
+The correction mattered:
+
+- `package main` marks an executable package
+- the real entry point is `func main()`
+- `func main()` does not have to live in a file literally named `main.go`; it just has to belong to the same `package main`
+
+That kind of correction is exactly why I find AI useful in early learning. It helps me move from “roughly right” to “precise enough to trust.”
+
+## Reading roles before reading theory
+
+From there, I focused on a few concrete anchors instead of broad syntax coverage:
+
+- `Hub`
+- `Client`
+- the WebSocket upgrade path
+- the lines that launch goroutines
+
+This helped me read the project through responsibilities rather than through language features.
+
+I was not asking, “What does Go support?”
+
+I was asking:
+
+- who owns room state
+- who handles I/O
+- how does a client get created
+- where does a message enter the system
+
+That shift made the code much easier to approach.
+
+## The first time pointers became concrete
+
+Pointers are easy to leave at the level of abstract definition.
+
+In this project, they became concrete because `readPump` and `writePump` both work with the same `*Client`.
+
+That means they share the same connection state, the same `id`, the same `conn`, and the same `send` channel. The practical value of the pointer was not the definition itself. It was the fact that multiple goroutines were intentionally looking at the same client object.
+
+That is one reason I like learning from a real program: concepts stop floating as vocabulary and start attaching themselves to visible behavior.
+
+## The `go` keyword made role separation visible
+
+Another important moment came from lines like these:
+
+```go
+go hub.Run()
+go client.writePump()
+go client.readPump()
+```
+
+Even before understanding the full Go concurrency model, I could already see one important thing: this program does not proceed as a single straight path. It explicitly separates responsibilities and lets them run independently.
+
+That gave me a more useful first intuition than a formal definition would have. I could already see that:
+
+- `hub.Run()` is the center of room-state handling
+- each client connection has separate read and write responsibilities
+
+Understanding the role split first made later concurrency concepts easier to absorb.
+
+## What this method changed for me
+
+The real lesson of this article is not only about `package main`, `func main()`, pointers, or goroutines.
+
+It is about reading order.
+
+When a language is new, I now think the better first question is often not “How do I learn the whole language?” but “How do I make this specific project readable enough that the next layer of questions becomes clear?”
+
+That reading order changes everything:
+
+- first, make the project legible
+- then, make the concepts precise
+- then, make the explanations reusable
+
+## If you want to learn this way too
+
+If you have an unfamiliar codebase in a language you do not fully know yet, here are better first questions to ask an AI agent:
+
+- where is the execution entry point
+- which two or three files are worth reading first
+- who owns the important state
+- what is the smallest meaningful data flow I should understand first
+- which part of my current explanation is still too vague
+
+Those questions usually create far more learning momentum than asking for a complete tutorial up front.
+
+## English version note
+
+This English article now covers the same core arc as the Chinese version, though later editing may still refine tone and examples as the full bilingual series matures.
+
+Previous: [How I Use an AI Agent as a Go Coach, Not Just a Code Generator](/en/blog/ai-agent-go-coach-not-code-generator)
+
+Next: [goroutines, channels, and the Hub: the first time Go concurrency really made sense to me](/en/blog/goroutine-channel-hub-go-concurrency)
+
