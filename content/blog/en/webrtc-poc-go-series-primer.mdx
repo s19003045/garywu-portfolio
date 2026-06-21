@@ -1,0 +1,122 @@
+---
+title: "Before This Go Series, First Understand What the WebRTC Project Does"
+date: "2026-06-19"
+description: "Before reading this AI-agent-assisted Go learning series, start with the minimum background: what WebRTC is, what the signaling server does, how this repository is staged by phase, and which files to inspect alongside the articles."
+tags: ["Go", "WebRTC", "Project Guide", "AI Agent", "Learning Strategy"]
+---
+
+If this is your first time opening the series, I strongly recommend starting here.
+
+The next seven articles try to explain both the Go concepts and the learning interaction clearly, but they all assume you already know what problem this project is solving, which stage you are looking at, and which files are worth opening beside the article.
+
+Without that background, a lot of terms can feel abrupt: WebRTC, signaling, join, signal, leave, Hub, readPump. At that point, the problem is often not that Go is hard. It is that you do not yet have a usable map.
+
+This article is that map.
+
+## What this project is doing
+
+This repository is called [webrtc-poc](https://github.com/s19003045/webrtc-poc).
+
+It is not a single demo with one fixed architecture. It is a staged WebRTC proof of concept that gradually evolves from the smallest possible 1:1 call into multi-user rooms, a React client, a Go backend, an SFU, and eventually multi-node routing and observability.
+
+So the value of the repository is not just that it can demonstrate a working call. Its real value is that each architecture transition is isolated into a phase that can be understood on its own.
+
+If you are still new to WebRTC, keep one thing in mind first:
+
+WebRTC lets browsers establish real-time media or data connections, but before those peer connections succeed, both sides still need to exchange negotiation information. That exchange layer is signaling.
+
+## What the signaling server is responsible for here
+
+This series focuses on **Phase 4**, where the original Node signaling server is rewritten in Go.
+
+This server does not directly process media encoding, and it is not yet an SFU. Its responsibility is closer to room coordination and message routing:
+
+- who joins a room
+- who is already in the room
+- which peer a signal message should be forwarded to
+- how other peers are notified when someone leaves
+
+That is why you keep seeing `join`, `signal`, and `leave` throughout the series. They are not arbitrary labels. They describe the core events of this system.
+
+If you think of this server as the middle layer that helps browsers find each other and exchange the information needed to establish connections, the later code becomes much easier to follow.
+
+## Why the repository is split into phases
+
+The phase structure matters because it tells you what kind of system this Go code grew out of.
+
+At a high level, it looks like this:
+
+```text
+phase-1   1:1 P2P, Node + vanilla frontend
+phase-2   multi-user mesh, chat, screen sharing
+phase-3   frontend rewritten in React + TypeScript
+phase-4   backend rewritten as a Go signaling server
+phase-5   single-node SFU
+phase-6   multi-node routing, auth, monitoring, load test
+```
+
+This series stays focused on `phase-4/` for a practical reason:
+
+- Go was the new language I was actively learning
+- Phase 4 is realistic enough to matter, but not yet as heavy as the SFU stage
+- it contains concurrency, long-lived connections, room state, event flow, and debugging situations that are ideal for learning Go
+
+## Which files are worth opening first
+
+If you want to read the articles while following the full codebase, do not start with the whole repository. Start with these locations:
+
+1. [Repository README](https://github.com/s19003045/webrtc-poc/blob/main/README.md)
+2. [Phase 4 README](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/README.md)
+3. [phase-4/server/main.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/main.go)
+4. [phase-4/server/hub.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/hub.go)
+5. [phase-4/server/client.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/client.go)
+6. [phase-4/server/message.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/message.go)
+
+You can reduce those to this small map:
+
+```text
+phase-4/server/
+├─ main.go      # HTTP / WebSocket entry point
+├─ hub.go       # room state center, join / signal / leave
+├─ client.go    # readPump / writePump per connection
+└─ message.go   # message structs
+```
+
+Once you know the boundary of these four files, the later articles stop feeling like isolated knowledge fragments.
+
+## If you are new to WebRTC, start with this minimum event flow
+
+You do not need to fully learn SDP, ICE, TURN, and STUN before reading this series.
+
+This minimal flow is enough to begin:
+
+1. a user joins a room
+2. the signaling server tells that user who is already there
+3. browsers exchange the data needed to establish peer connections
+4. once the connection is established, media mainly goes peer-to-peer or through an SFU, not continuously through the signaling server
+5. when someone leaves, the server updates room state and notifies the others
+
+Phase 4 in this series mostly focuses on steps 1, 2, 3, and 5.
+
+## How to read the series
+
+If Go is new to you and this repository is also new to you, I recommend this order:
+
+1. read this background primer first
+2. read article 1 to see how I used an AI agent as a programming coach
+3. read article 2 to build the entry-point and file map
+4. continue through goroutines and channels, the WebSocket lifecycle, the signaling event flow, and debugging
+
+That order is much easier to digest than jumping into the middle of the series without context.
+
+## Series Guide
+
+1. [How I Use an AI Agent as a Go Coach, Not Just a Code Generator](/en/blog/ai-agent-go-coach-not-code-generator)
+2. [Read the Project Before the Syntax: How I Started Learning Go from a WebRTC Codebase](/en/blog/learn-go-from-real-project-entrypoint)
+3. [Goroutines, Channels, and the Hub: The First Time Go Concurrency Really Made Sense to Me](/en/blog/goroutine-channel-hub-go-concurrency)
+4. [The WebSocket Lifecycle: How readPump, writePump, and Cleanup Fit Together](/en/blog/websocket-readpump-writepump-lifecycle)
+5. [The Signaling Event Flow: How join, signal, and leave Move Through the Go Server](/en/blog/signaling-event-flow-join-signal-leave)
+6. [Minimal Debugging: How I Used Logs to Understand a Go Service](/en/blog/minimal-debugging-go-with-logs)
+7. [How to Learn a New Programming Language More Actively in the Age of AI Agents](/en/blog/active-learning-new-language-with-ai-agent)
+
+Next: [How I Use an AI Agent as a Go Coach, Not Just a Code Generator](/en/blog/ai-agent-go-coach-not-code-generator)

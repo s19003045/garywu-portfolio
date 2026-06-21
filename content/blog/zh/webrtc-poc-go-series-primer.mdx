@@ -1,0 +1,122 @@
+---
+title: "讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼"
+date: "2026-06-19"
+description: "如果你想讀懂這個 AI agent 學 Go 系列，先補上最小必要背景：WebRTC 是什麼、signaling server 在做什麼、這個 repo 的 phase 結構怎麼看，以及完整程式碼應該從哪裡開始對照。"
+tags: ["Go", "WebRTC", "專案導讀", "AI Agent", "學習方法"]
+---
+
+如果你是第一次打開這個系列，我很建議先讀這篇。
+
+因為後面 7 篇文章，雖然會盡量把 Go 概念與互動過程講清楚，但它們共同建立在一個前提上：你至少知道這個專案在解什麼問題、目前看到的是哪一個階段，以及哪些檔案值得拿來對照。
+
+如果沒有這些背景，很多詞會顯得很突兀，例如：WebRTC、signaling、join、signal、leave、Hub、readPump。你可能不是看不懂 Go，而是根本還沒拿到足夠的地圖。
+
+這篇就是那張地圖。
+
+## 這個專案在做什麼
+
+這個 repo 叫做 [webrtc-poc](https://github.com/s19003045/webrtc-poc)。
+
+它不是單一功能的 demo，而是一個把 WebRTC 視訊系統逐步演進的 POC。它從最小可行的 1 對 1 通話開始，慢慢走到多人房間、React 前端、Go 後端、SFU，再到多節點與監控。
+
+也就是說，這個 repo 的核心價值不只是「做出一個能通話的展示」，而是把每一次架構轉折都拆成可單獨理解的 phase。
+
+如果你本來就對 WebRTC 不熟，可以先只記住一件事：
+
+WebRTC 讓瀏覽器彼此建立即時音視訊或資料連線，但在真正建立成功之前，雙方還需要先交換一些協商資訊。這段交換資訊的過程，就是 signaling。
+
+## signaling server 在這裡負責什麼
+
+這個系列聚焦的是 **Phase 4**，也就是把原本的 Node signaling server 改寫成 Go。
+
+這個 server 不直接處理影音編碼，也不是 SFU。它的責任比較像是房間協調與訊息轉送：
+
+- 誰加入房間
+- 房間裡原本有哪些人
+- 某個 peer 的 signal 要轉送給誰
+- 某個 peer 離開後，其他人要怎麼被通知
+
+所以你在系列裡一直看到的 `join`、`signal`、`leave`，本質上都在處理這些事情。
+
+如果你把這個 server 想成「幫瀏覽器彼此牽線、交換建立連線所需資訊的中介者」，後面的程式碼會好懂很多。
+
+## 為什麼這個 repo 要分 phase
+
+這個 repo 的 phase 結構很重要，因為它決定你現在看到的 Go 程式，到底是從哪個技術演進點長出來的。
+
+可以先簡化成這樣：
+
+```text
+phase-1   1:1 P2P，Node + 原生前端
+phase-2   多人 mesh、聊天、螢幕分享
+phase-3   前端改成 React + TypeScript
+phase-4   後端改成 Go signaling server
+phase-5   導入單節點 SFU
+phase-6   多節點、路由、認證、監控與壓測
+```
+
+這個系列聚焦在 `phase-4/`，原因很單純：
+
+- Go 是我當時正在學的新語言
+- Phase 4 的複雜度剛好足夠真實，但又還沒大到像 SFU 那麼重
+- 它同時有併發、長連線、房間狀態、事件流與除錯情境，很適合拿來學 Go
+
+## 先看哪幾個檔案最有用
+
+如果你想邊讀文章邊對照完整程式碼，最值得先看的不是整個 repo，而是下面幾個位置：
+
+1. [Repo 總覽 README](https://github.com/s19003045/webrtc-poc/blob/main/README.md)
+2. [Phase 4 README](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/README.md)
+3. [phase-4/server/main.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/main.go)
+4. [phase-4/server/hub.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/hub.go)
+5. [phase-4/server/client.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/client.go)
+6. [phase-4/server/message.go](https://github.com/s19003045/webrtc-poc/blob/main/phase-4/server/message.go)
+
+你可以把它們先想成這樣：
+
+```text
+phase-4/server/
+├─ main.go      # HTTP / WebSocket 入口
+├─ hub.go       # 房間狀態中心、join / signal / leave
+├─ client.go    # 每條連線的 readPump / writePump
+└─ message.go   # 訊息格式
+```
+
+只要先抓到這四個檔案的責任邊界，系列後面的每一篇文章就不會像在看散落的知識點。
+
+## 如果你不熟 WebRTC，先抓這個最小流程
+
+你不用先把 SDP、ICE、TURN、STUN 全部補完，才開始讀這個系列。
+
+先懂這個最小流程就夠：
+
+1. 使用者進入房間
+2. signaling server 告訴他房間裡有誰
+3. 瀏覽器彼此交換建立連線需要的資訊
+4. 連線建立後，媒體主要走 peer-to-peer 或 SFU，不是一直經過 signaling server
+5. 有人離開時，server 要更新房間狀態並通知其他人
+
+這個系列的 Phase 4 重點，主要落在第 1、2、3、5 步。
+
+## 你可以怎麼讀這個系列
+
+如果你是第一次接觸 Go，也第一次接觸這個專案，我會建議閱讀順序是：
+
+1. 先讀這篇背景導讀
+2. 再讀系列第 1 篇，看我怎麼把 AI agent 當成程式教練
+3. 接著讀第 2 篇，建立進入點與檔案地圖
+4. 再一路看 goroutine / channel、WebSocket 生命週期、signaling 事件流與除錯
+
+這樣的順序，會比直接跳進中間任何一篇更容易建立完整理解。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+下一篇：[我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
