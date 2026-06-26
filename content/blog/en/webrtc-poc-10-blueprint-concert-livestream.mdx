@@ -1,0 +1,136 @@
+---
+title: "Scenario Blueprint 3: A 10,000-Person Concert Livestream"
+date: "2026-07-05"
+description: "The last complete blueprint, and a completely different shape: a single room flooded with tens of thousands of viewers who almost all only watch. From a few publishers' ingest, transcoding and packaging, LL-HLS/CDN distribution, and ticket validation to CDN cost — an end-to-end strategy."
+tags: ["WebRTC", "Livestreaming", "HLS", "CDN", "System Architecture"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+The previous two articles ([open large-scale platform](/en/blog/webrtc-poc-8-blueprint-meet-like-platform), [security-strict enterprise](/en/blog/webrtc-poc-9-blueprint-secure-enterprise)) were both "interactive, many small/medium rooms (scenario A)." This one is a completely different shape: a **10,000-person concert livestream** — a single "room" flooded with tens or even hundreds of thousands of people, but **the vast majority only watch**, with only a few on stage actually sending.
+
+The most important judgment for this scenario was already stated in the first article: **do not put everyone into WebRTC.** Its right answer is "broadcast," not "interactive."
+
+> Again, this is "if the goal is this scenario, here is how I would do it."
+
+## 1. Scenario and hard constraints
+
+- **Shape of scale**: a single huge room (scenario B), with tens of thousands to hundreds of thousands of viewers online at once.
+- **Interactive vs broadcast**: **mostly broadcast**. Publishers (stage cameras/audio) are few; everyone else watches.
+- **Latency can relax**: for watch-only, a few seconds of latency is perfectly acceptable — and that is exactly the chip you trade for unlimited scale.
+- **Cost-sensitive**: the main cost is **CDN traffic**, directly tied to viewer count.
+- **Admission control**: tickets must be checked; only buyers can watch.
+- **Non-negotiables**: withstand a massive concurrent surge, smooth playback, and ticketing that resists piracy.
+
+Recognize that "most people do not need interaction," and the whole architecture opens up.
+
+## 2. Reference architecture (two tiers: ingest + distribution)
+
+```
+  Stage sources (few)                Distribution (massive)
+  cameras/audio ─WebRTC/SRT/RTMP─▶ ┌──────────┐  push  ┌─────────┐  pull
+                                   │ transcode │──────▶│  CDN     │──HTTP──▶ viewers (HLS player)
+                                   │ /package  │       │(origin→  │
+                                   │ ABR + LL- │       │  edge)   │
+                                   │  HLS/CMAF │       └─────────┘
+                                   └────┬─────┘
+                                        │ recording
+                                        ▼
+                                   VOD storage (replay/DVR)
+
+  Separately: ticketing/Auth ── signed URL/cookie ──▶ only ticket holders can pull from the CDN
+              chat/interaction ── a separate scalable messaging system (apart from media)
+```
+
+The key: **the ingest side uses real-time tech (a few people), the distribution side uses streaming + CDN (the masses).** The two are decoupled.
+
+## 3. Media layer (deep): two completely different tiers
+
+**(a) Ingest / production (few publishers)**
+- Stage sources can come in via **WebRTC/SFU** (when low-latency coordination is needed) or **SRT / RTMP** (common in professional production — stable, fault-tolerant).
+- Multiple sources are first **mixed into a single program feed** on a media server (switching, audio mixing, captions).
+
+**(b) Distribution (massive audience)**
+- Transcode the program feed into **multiple renditions (an ABR ladder)**: e.g. 240p–1080p, so the player auto-switches by network.
+- **Package into LL-HLS / CMAF** and push to a **CDN**; viewers pull over HTTP. CDN edge nodes scale horizontally to any size — **this is what decouples scale from cost.**
+- Latency: LL-HLS is about 2–5 seconds, plenty for a concert.
+- **Not** one WebRTC connection per viewer. Only if a small VIP subset truly needs "second-level interactivity" do you add a separate small low-latency WebRTC tier.
+- Resilience: **origin shielding** (protect the origin from being overwhelmed), **multi-CDN** (switch away if one CDN fails).
+
+## 4. Identity and access (deep): tickets, not accounts
+
+- **Ticket validation**: not a traditional login, but "a ticket = the right to enter." The ticketing system issues an admission credential bound to "this event + ticket tier."
+- **Signed URL / cookie**: the player exchanges the credential for a **time-limited signed stream URL** (or signed cookie), so only ticket holders can pull the stream from the CDN.
+- **Anti-sharing**: limit concurrency per ticket (one ticket can only play on N devices at once), preventing one ticket serving many.
+- **Advanced**: premium events can add **DRM** (Widevine / FairPlay).
+
+## 5. Data and compliance
+
+- **Content rights**: licensing and regional restrictions for the performance (**geo-blocking**: some regions cannot stream it).
+- **DRM**: used when needed, to prevent recording and leaks.
+- **Watermarking**: embed the viewer ID so piracy is traceable.
+- **Replay / DVR / VOD**: record while live, offering on-demand after the event.
+
+## 6. Frontend / UX
+
+- **HLS player** (hls.js / native), **ABR auto quality**, low-latency mode.
+- **DVR / time-shift**: rewind to catch a segment you missed.
+- **Chat / interaction**: at massive scale, chat runs on **a separate scalable messaging system** (pub/sub), and is usually sampled/rate-limited for display, or it floods the screen.
+- **Live state**: a "LIVE" indicator, captions, viewer count.
+
+## 7. Observability, operations, and cost
+
+- **CDN traffic is the main cost**: ≈ viewers × bitrate × duration. This is the one number to watch obsessively in this scenario.
+- **QoE metrics** (reported from the player): rebuffering ratio, startup time, quality-switch count — the real measure of "is the viewer experience good."
+- **Cost levers**: ABR ladder design, more efficient codecs (HEVC/AV1 to cut bitrate), CDN tiered pricing, multi-CDN negotiation, and optional P2P-assisted delivery.
+
+## 8. Key risks and failure modes
+
+| Risk | What it looks like | Mitigation |
+|---|---|---|
+| Surge at start | origin overwhelmed, viewers fail to start | origin shielding, CDN pre-warm, tiered caching |
+| CDN failure | the whole audience loses the stream | multi-CDN, instant switching |
+| Ingest interruption | stage feed drops, broadcast cuts out | redundant encoders / dual ingest |
+| Piracy / unauthorized recording | one ticket many viewers, leaks | concurrency limits, DRM, watermarking, signed URLs |
+| Chat flood | massive messages overwhelm the frontend | separate messaging system + rate-limit/sampling |
+
+## 9. Stack at a glance
+
+- **Ingest**: WebRTC/SFU or SRT/RTMP (professional production).
+- **Production**: a switching/mixing media server.
+- **Transcode/package**: a multi-rendition ABR + LL-HLS/CMAF packager.
+- **Distribution**: multi-CDN (origin → edge).
+- **Player**: hls.js / native HLS.
+- **Admission**: ticketing system + signed URL/cookie (+ optional DRM).
+- **Interaction**: a scalable pub/sub messaging system (chat/reactions).
+- **Observability**: player QoE analytics + CDN usage monitoring.
+
+---
+
+Put the three scenarios side by side, and the biggest takeaway is not "I learned a technology," but seeing that **the same words "video system" actually hide three different products**: Meet-like relies on SFU + spreading rooms, the enterprise on on-prem + compliance, the concert on broadcast + CDN. Start from the goal, and the technology gets picked for you — which is exactly what this whole `webrtc-poc` series, from "turning on the camera" all the way to "how to choose and how to ship," most wants to leave behind.
+
+## glossary
+
+- **LL-HLS / CMAF**: low-latency HTTP streaming formats, suited to large-scale livestreaming.
+- **ABR ladder**: multiple quality renditions of the same content so the player auto-switches by network.
+- **SRT / RTMP**: transport protocols common for professional livestream ingest.
+- **origin shielding**: a cache layer in front of the origin to prevent massive requests from overwhelming it.
+- **DRM / geo-blocking**: digital rights management / regional playback restrictions.
+- **QoE**: the playback quality a user actually perceives (rebuffering, startup, quality switches).
+
+## WebRTC POC series
+
+This is Part 10 of the series, the last of the "scenario blueprint" trilogy and of the whole series.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+8. [Scenario Blueprint 1: The Complete Strategy for an Open Large-Scale Platform (Meet-like)](/en/blog/webrtc-poc-8-blueprint-meet-like-platform)
+9. [Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System](/en/blog/webrtc-poc-9-blueprint-secure-enterprise)
+10. **Scenario Blueprint 3: A 10,000-Person Concert Livestream**
+
+Previous: [Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System](/en/blog/webrtc-poc-9-blueprint-secure-enterprise)

@@ -1,0 +1,142 @@
+---
+title: "場景藍圖一：開放大型視訊平台（類 Google Meet）的完整策略"
+date: "2026-07-03"
+description: "把決策框架落到第一個場景：很多中小型房間、互動為主的開放平台。從媒體層、身分與會議、權限連結、合規、UX、可觀測性到成本，給一份端到端的完整藍圖。"
+tags: ["WebRTC", "SFU", "LiveKit", "系統架構", "可擴展性"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+前面三篇（[決策框架](/zh/blog/webrtc-poc-5-production-ready-depends-on-goals)、[媒體層](/zh/blog/webrtc-poc-6-media-plane-build-vs-adopt)、[應用層](/zh/blog/webrtc-poc-7-app-layer-and-scenarios)）建立了「怎麼選」。但「怎麼選」講完，還欠「**選定之後，這個場景的完整策略到底長什麼樣**」。
+
+這篇是第一份完整藍圖：**開放的大型視訊平台**，類似 Google Meet——很多中小型房間、大家都開鏡頭互動、面向一般大眾。我會從媒體一路走到成本，盡量具體。
+
+> 這仍是「決策藍圖」而非實作報告：以下是「若目標是這個場景，我會這樣做」的完整規劃，不是「我已經這樣跑到上萬人」。
+
+## 1. 場景與硬限制
+
+- **規模形狀**：很多個中小型房間（場景 A），不是單一大房。總人數靠房間數水平擴展。
+- **每房上限**：刻意設上限（例如 50–100 人）。原因見下：單房下載總量 ∝ N²，上限就是成本與品質的閘門。
+- **互動為主**：人人可能開鏡頭、講話、分享螢幕。
+- **面向大眾**：低摩擦註冊、訪客可加入、全球使用者、行動裝置占比高。
+- **不可妥協**：加入門檻要低、跨區延遲要可接受、**規模化成本要可控**、要能抗濫用（防洗版、防騷擾）。
+
+這些限制會反覆出現在後面每個決定裡。
+
+## 2. 參考架構
+
+```
+                 ┌─────────────┐   OIDC    ┌─────────────┐
+  瀏覽器/App ───▶│  靜態前端    │──────────▶│  Auth/API   │── 會議/使用者 ──▶ Postgres
+   (LiveKit SDK) │  (CDN/edge) │           │  簽發媒體     │── 即時/可過期 ──▶ Redis
+        │        └─────────────┘           │  token      │
+        │  帶 token + 就近 region                └──────┬──────┘
+        ▼                                          token
+  ┌───────────────────────────────┐
+  │  LiveKit 叢集（多區域、自動擴縮）│── 錄影 egress ──▶ 物件儲存(S3/GCS) ──▶ 簽名連結
+  │  每房 pin 在一個區域 / 節點     │
+  └───────────────┬───────────────┘
+                  │ 嚴格 NAT 時
+                  ▼
+            TURN(coturn 叢集)
+```
+
+重點：**媒體與應用解耦**。Auth/API 只管「人、會議、權限、簽 token」；媒體交給 LiveKit；前端是純靜態、走 CDN。
+
+## 3. 媒體層（深）
+
+**選型：採用 LiveKit**（雲端或自架 k8s 皆可）。理由在[媒體層那篇](/zh/blog/webrtc-poc-6-media-plane-build-vs-adopt)講過——互動型、要快、規模靠多房分散，自己維護 simulcast/TURN/擴縮不划算。
+
+具體要打開/設定的東西：
+
+- **simulcast 預設開**：每路影像送多種畫質，接收端依視窗大小與網路挑 layer。小畫面拿低解析度，直接砍掉大量下行頻寬。
+- **多區域 + 房間親和性**：使用者就近接入；一個房間 pin 在一個區域的節點（同房同節點，跟你 Phase 6 的房間親和性是同一個原理，只是換成 LiveKit 在做）。
+- **每房上限當閘門**：單房 N 人時，全房下行 ≈ N×(N−1) 路。設上限把單房成本封頂，避免某個爆紅房間拖垮節點。
+- **自動擴縮 + graceful drain**：依連線數/頻寬增減節點；節點下線要先停止接新房、等舊房自然散場。
+- **TURN（coturn）**：約一到兩成使用者在嚴格 NAT / 企業防火牆後，純 STUN 連不上，要中繼。
+
+**容量估算的思路**：先量「單節點在可接受 CPU/頻寬下能扛幾路下行」，再用「每房路數 ≈ N²」回推單節點能放幾個房，最後用「目標同時房數 ÷ 每節點房數」算節點數，並預留 region 容錯餘量。這比「拍腦袋開幾台」可靠。
+
+## 4. 身分與存取（深）
+
+- **登入**：Google OIDC 為主（低摩擦），可加其他社群登入；同時支援**訪客**經連結加入（拿到能力受限的 token）。
+- **會議是資料庫實體**（Postgres）：`meeting{ id, code(短碼), host_id, passcode?, settings, scheduled_start?, expires_at }`。「分享連結」= 分享 `code`；「建立連結」= 開一筆 record；「預先建立/排程」= 設 `scheduled_start` + 行事曆邀請。
+- **角色與權限**：host / co-host / participant / 觀看者；host 可鎖房、踢人、全體靜音；可選 lobby（敲門才進）。
+- **token 設計（關鍵）**：Auth/API 驗證「這個人有沒有資格進這個會議」後，才簽一張**短效**媒體 token，claims 例如：
+
+```
+{ user, room, role:"host", canPublish:true, canScreenshare:true, exp:+10min }
+```
+
+媒體層（LiveKit）只依 token 放行與限制能力；**決定權限的是你的 Auth/API**。這正是 Phase 6「房間級 token」自然長大的版本。
+
+## 5. 資料與合規（此場景為一般等級）
+
+- 全程 TLS、儲存加密；錄影 opt-in，存物件儲存、以簽名連結存取。
+- GDPR 基本盤：資料匯出/刪除、保留政策。
+- **E2EE 取捨**：SFU 要看得到媒體才能轉發，所以預設**不做** E2EE。要做的話得用 insertable streams，但會犧牲部分伺服器端功能（如伺服器端錄影/字幕）——這個場景通常不值得，留給大廠場景再談。
+
+## 6. 前端 / UX 重點
+
+- **Pre-join / lobby**：選鏡頭麥克風、預覽、測網路，再進房。
+- **自適應版面**：grid / spotlight、主講者偵測、釘選、螢幕分享。
+- **網路品質提示**：把每連線指標（bitrate/RTT/丟包）變成右上角訊號格、「對方網路不穩」提示。
+- **韌性**：斷線自動重連、切網（WiFi↔行動網路）、權限被拒的引導。
+- **行動與無障礙**：RWD、字幕（可選）。
+
+## 7. 可觀測性、維運與成本
+
+- **指標**：節點層級（房/連線/track 數）+ 逐連線品質——你 Phase 6 已經會收這些，LiveKit 也內建。
+- **SLO**：加入成功率、媒體建立時間、p95 RTT/丟包；對應告警規則。
+- **成本模型（這場景最該盯的）**：主成本是 **SFU 下行頻寬**（≈ 房數 × N²）+ TURN 中繼流量 + 錄影儲存。
+- **省錢槓桿**：每房上限、simulcast layer 上限、就近 region、免費方案的時長/人數限制。
+
+## 8. 主要風險與失效模式
+
+| 風險 | 失效樣子 | 緩解 |
+|---|---|---|
+| 熱門會議瞬間湧入 | 開場 thundering herd、節點爆量 | 區域分散、自動擴縮、加入排隊 |
+| 區域故障 | 整區房間斷線 | 跨區容錯、房間可重新指派 |
+| 濫用（洗版/騷擾/zoombombing） | 陌生人亂入、洗訊息 | 要求登入或密碼、限制建房頻率、host 控制（鎖房/踢人/全體靜音） |
+| 成本失控 | 帳單暴衝 | 每房上限 + 用量監控 + 告警 |
+
+## 9. 技術棧速覽
+
+- **前端**：React + LiveKit JS SDK，靜態走 CDN。
+- **Auth/API**：Go（或 Node）+ OIDC；簽媒體 token。
+- **媒體**：LiveKit（雲端，或自架於 k8s）。
+- **狀態**：Postgres（會議/使用者/權限）、Redis（即時/可過期）。
+- **NAT**：coturn 叢集。
+- **儲存/分發**：物件儲存（錄影）、CDN（前端 + HLS 回放，若需要）。
+- **觀測**：Prometheus + Grafana。
+
+---
+
+這就是「開放大型平台」的完整藍圖深度。後面兩篇會用同一份模板，把「資安嚴謹大廠」與「萬人演唱會」兩個形狀完全不同的場景，各寫一份同等深度的策略。
+
+## 名詞小抄
+
+- **simulcast**：同一路影像同時送多種畫質，接收端依條件挑選。
+- **房間親和性**：同一房間的人導到同一節點，避免跨節點轉發。
+- **TURN / coturn**：嚴格 NAT 下的媒體中繼；coturn 是常見開源實作。
+- **OIDC**：建立在 OAuth2 上的身分驗證協定，Google 登入屬此類。
+- **SLO**：服務水準目標，用來定義「多好算正常」並驅動告警。
+
+## WebRTC POC 系列文章
+
+這是系列第 8 篇，也是「場景完整藍圖」的第一篇（決策三部曲之後的深入版）。
+
+1. [從 1:1 WebRTC 開始：視訊系統真正困難的不是開鏡頭](/zh/blog/webrtc-poc-1-signaling-presence)
+2. [多人通話為什麼不能只靠 Mesh：WebRTC 架構的第一個上限](/zh/blog/webrtc-poc-2-mesh-limit)
+3. [把 WebRTC POC 變成可維護系統：React、TypeScript 與 Go 的角色](/zh/blog/webrtc-poc-3-maintainable-stack)
+4. [從 Mesh 到 SFU：視訊系統真正走向規模化的轉折](/zh/blog/webrtc-poc-4-sfu-scale)
+5. [Production-ready 沒有單一答案：從目標反推策略](/zh/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. [媒體層的抉擇：自建 SFU、採用 LiveKit、還是廣播管線](/zh/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. [媒體層之外：應用層才是產品價值，以及情境如何改變一切](/zh/blog/webrtc-poc-7-app-layer-and-scenarios)
+8. **場景藍圖一：開放大型視訊平台（類 Google Meet）的完整策略**
+9. [場景藍圖二：資安嚴謹的跨國大廠視訊系統](/zh/blog/webrtc-poc-9-blueprint-secure-enterprise)
+10. [場景藍圖三：萬人演唱會現場直播](/zh/blog/webrtc-poc-10-blueprint-concert-livestream)
+
+上一篇：[媒體層之外：應用層才是產品價值，以及情境如何改變一切](/zh/blog/webrtc-poc-7-app-layer-and-scenarios)
+
+下一篇：[場景藍圖二：資安嚴謹的跨國大廠視訊系統](/zh/blog/webrtc-poc-9-blueprint-secure-enterprise)

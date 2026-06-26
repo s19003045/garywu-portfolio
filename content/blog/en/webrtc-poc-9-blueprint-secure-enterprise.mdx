@@ -1,0 +1,136 @@
+---
+title: "Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System"
+date: "2026-07-04"
+description: "The second complete blueprint: a multinational enterprise where data must never leave, multiple countries' laws apply, and personal devices are banned from the office. From on-prem self-hosting and enterprise SSO to E2EE, audit, and strict-firewall traversal — an end-to-end strategy."
+tags: ["WebRTC", "Security", "Compliance", "LiveKit", "System Architecture"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+The [previous article](/en/blog/webrtc-poc-8-blueprint-meet-like-platform) was the complete blueprint for an "open large-scale platform." This one moves to the other end of the spectrum: a **security-strict multinational enterprise** — strict enough that employees cannot bring personal devices into the office. Headcount is not necessarily large, but every decision is bound by "data must not leave" and "must comply with multiple countries' laws."
+
+You will see that even though this is also "interactive video" using the same media model (SFU) as the Meet-like case, the compliance axis pushes almost every choice in the opposite direction.
+
+> Again, this is "if the goal is this scenario, here is how I would do it," not an implementation report.
+
+## 1. Scenario and hard constraints
+
+- **Shape of scale**: many small/medium meetings (scenario A), but **extremely sensitive**.
+- **Data sovereignty**: media, recordings, and logs **must never leave the company-controlled environment**; across multiple countries, each country's data may need to be stored in-region.
+- **Device control**: no personal devices → only **company-issued or managed devices** (a managed browser or a desktop app + MDM).
+- **Network**: inside strict corporate firewalls that often block UDP and only allow 443.
+- **Identity**: tied to the corporate directory; consumer logins like Google are out of the question.
+- **Non-negotiables**: on-prem / private cloud, full audit, an E2EE option, traversal of strict firewalls, and passing audits.
+
+These constraints drive the architecture more than scale does.
+
+## 2. Reference architecture (entirely within the company-controlled environment)
+
+```
+  managed device / managed browser
+        │  SAML/OIDC
+        ▼
+  ┌──────────────┐  meetings/perms/audit  ┌──────────────┐
+  │ Corp IdP     │   ┌────────────┐       │ Postgres(on-prem)│
+  │ (AzureAD/    │──▶│ Auth/API   │───────┤ audit log → SIEM │
+  │  Okta/LDAP)  │   │ (on-prem)  │       └──────────────┘
+  └──────────────┘   └─────┬──────┘
+                           │ short-lived token (dept/perms)
+                           ▼
+  ┌───────────────────────────────┐
+  │ LiveKit self-hosted (on-prem   │── recording → on-prem storage (strict access + legal hold)
+  │ k8s)                           │
+  └───────────────┬───────────────┘
+                  │ when UDP is blocked
+                  ▼
+        coturn (TURN over TLS 443)
+```
+
+The key: **no line connects to any external public-cloud SaaS**. Every component lives in the company-controlled data center / private cloud.
+
+## 3. Media layer (deep)
+
+The media model is still an SFU (interactive), but it **must be self-hosted on-prem** — public-cloud SaaS would mean handing media to an outsider, directly violating "data must not leave."
+
+- **LiveKit self-hosted on on-prem k8s**: get the open-source SFU's capabilities while keeping data inside the company. This is exactly where the Phase 6 self-building experience pays off — you know how to operate and debug it.
+- **Strict firewall traversal**: corporate networks often block UDP. Countermeasure: **coturn + TURN over TLS (port 443)**, so media can disguise itself as ordinary HTTPS traffic. Reuse the Phase 6 `UDP_PORT` fixed-port + `NAT1TO1_IP` idea, plus a TLS relay fallback.
+- **Optional: force relay**: for security, disable direct P2P and always go through TURN, to avoid exposing the internal IP topology.
+- **Capacity**: runs on owned hardware, sized to data-center capacity; simulcast still helps, but headcount is usually not the bottleneck — compliance and stability are.
+
+## 4. Identity and access (deep)
+
+- **Login: enterprise SSO**, integrating the company's existing IdP (Azure AD / Okta / self-hosted LDAP) via **SAML 2.0 or OIDC**; use **SCIM** to auto-provision accounts and revoke on offboarding.
+- **Roles from the directory**: departments, levels, and groups map directly from the IdP to meeting permissions, rather than building a separate account system.
+- **External guests**: banned by default; if necessary, a strictly controlled flow (extra verification + expiry + watermark + limited capabilities).
+- **token claims**: beyond room/role, carry department, clearance, and even **device attestation results** (only MDM-managed devices are admitted).
+- **Meetings tied to the directory**: meetings hang under org units, with ACLs by directory group.
+
+## 5. Data and compliance (the center of gravity here)
+
+- **Data residency**: per each country's law, media and recordings are stored in the corresponding region's on-prem data center.
+- **E2EE**: when regulations require "even the server cannot see the content," use insertable streams for end-to-end encryption. **Trade-off**: the SFU cannot see the media → server-side recording/captions break, so compliance recording must shift to controlled key escrow or client-side recording.
+- **Audit**: who, when, joined which meeting, did what — all written to **immutable audit logs**, integrated with a SIEM, available for legal review and legal hold.
+- **Retention and deletion**: explicit retention periods and end-of-life destruction policies.
+
+## 6. Frontend / UX (locked down tighter)
+
+- **Controlled client**: a managed desktop app or managed browser; personal recording disabled, file sharing restricted (or DLP-scanned).
+- **Exfiltration prevention**: on-screen **watermarking** (embedding the user ID, so a leaked screenshot is traceable), screen-share controls.
+- **UX yields to security**: many Meet-like conveniences (casually sharing a link, one-click guest join) are deliberately turned off here.
+
+## 7. Observability, operations, and cost
+
+- **Audit-grade logging + SIEM**: not just system health, but "policy violation" alerts.
+- **Operations is the biggest cost**: deploying, patching, and disaster recovery for on-prem infrastructure, plus the long-term investment to pass compliance certifications (ISO 27001, various national data-protection regimes).
+- **Metrics**: node + per-connection quality as usual, but with extra attention to "can it even connect" (strict-NAT traversal success rate).
+
+## 8. Key risks and failure modes
+
+| Risk | What it looks like | Mitigation |
+|---|---|---|
+| Insider data exfiltration | employees recording/screenshotting and leaking | watermarking, DLP, disable personal recording, audit traceability |
+| Strict firewall blocks connectivity | UDP fully blocked, meetings cannot start | TURN over TLS (443), forced-relay fallback |
+| Audit failure | missing logs, no traceability | immutable audit logs + SIEM + retention policy |
+| E2EE key management | key leakage or loss | HSM/KMS management, strict access control |
+| Cross-border legal conflict | data stored in the wrong region | per-country data residency + regional routing |
+
+## 9. Stack at a glance
+
+- **Client**: managed desktop app / managed browser (with MDM).
+- **Identity**: corporate IdP (SAML/OIDC) + SCIM.
+- **Auth/API**: self-hosted on-prem, signing short-lived tokens carrying permissions/device attestation.
+- **Media**: LiveKit self-hosted on on-prem k8s.
+- **NAT**: coturn (TURN over TLS 443, optionally forced relay).
+- **State/storage**: on-prem Postgres, per-country on-prem object storage.
+- **Security/audit**: SIEM, HSM/KMS (E2EE keys), DLP.
+
+---
+
+Compare with the previous article and you see it: the media model is the same (SFU), but "can you use public cloud, what login, whether to do E2EE, whether UX yields to security" are all opposite. **This is the most dramatic pairing of "same axes, different goals, different answers."** The next article is the last scenario, and one of a completely different shape — a 10k concert livestream.
+
+## glossary
+
+- **SSO / IdP**: single sign-on / identity provider (enterprises commonly use Azure AD, Okta, LDAP).
+- **SCIM**: a standard for cross-system account provisioning and deprovisioning.
+- **E2EE / insertable streams**: end-to-end encryption; the browser mechanism that lets you encrypt media before sending.
+- **TURN over TLS**: wrapping the media relay in TLS (443) to traverse firewalls that only allow HTTPS.
+- **SIEM**: a system that aggregates and analyzes security events for audit and alerting.
+
+## WebRTC POC series
+
+This is Part 9 of the series, the second of the "scenario blueprints."
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+8. [Scenario Blueprint 1: The Complete Strategy for an Open Large-Scale Platform (Meet-like)](/en/blog/webrtc-poc-8-blueprint-meet-like-platform)
+9. **Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System**
+10. [Scenario Blueprint 3: A 10,000-Person Concert Livestream](/en/blog/webrtc-poc-10-blueprint-concert-livestream)
+
+Previous: [Scenario Blueprint 1: The Complete Strategy for an Open Large-Scale Platform (Meet-like)](/en/blog/webrtc-poc-8-blueprint-meet-like-platform)
+
+Next: [Scenario Blueprint 3: A 10,000-Person Concert Livestream](/en/blog/webrtc-poc-10-blueprint-concert-livestream)

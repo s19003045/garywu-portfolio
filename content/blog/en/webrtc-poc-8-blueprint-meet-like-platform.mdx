@@ -1,0 +1,143 @@
+---
+title: "Scenario Blueprint 1: The Complete Strategy for an Open Large-Scale Platform (Meet-like)"
+date: "2026-07-03"
+description: "Bringing the decision framework down to the first scenario: many small/medium rooms, interactive, an open platform. From media layer to identity, permissions, compliance, UX, observability, and cost — an end-to-end blueprint."
+tags: ["WebRTC", "SFU", "LiveKit", "System Architecture", "Scalability"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+The previous three articles ([the decision framework](/en/blog/webrtc-poc-5-production-ready-depends-on-goals), [the media layer](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt), [the app layer](/en/blog/webrtc-poc-7-app-layer-and-scenarios)) established "how to choose." But after "how to choose," there is still "**once chosen, what does this scenario's complete strategy actually look like.**"
+
+This is the first complete blueprint: an **open large-scale video platform**, like Google Meet — many small/medium rooms, everyone on camera and interacting, aimed at the general public. I will go from media all the way to cost, as concretely as I can.
+
+> This is still a "decision blueprint," not an implementation report: below is "if the goal is this scenario, here is how I would do it," not "I already ran this to tens of thousands."
+
+## 1. Scenario and hard constraints
+
+- **Shape of scale**: many small/medium rooms (scenario A), not one huge room. Total headcount scales out by room count.
+- **Per-room cap**: deliberately capped (e.g. 50–100). The reason follows: a single room's total download scales as N², so the cap is the gate on cost and quality.
+- **Mostly interactive**: anyone may turn on camera, talk, share screen.
+- **Public-facing**: low-friction sign-up, guests can join, global users, high mobile share.
+- **Non-negotiables**: low join friction, acceptable cross-region latency, **controllable cost at scale**, and abuse resistance (anti-spam, anti-harassment).
+
+These constraints recur in every decision below.
+
+## 2. Reference architecture
+
+```
+                 ┌─────────────┐   OIDC    ┌─────────────┐
+  Browser/App ──▶│  Static FE   │──────────▶│  Auth/API   │── meetings/users ──▶ Postgres
+   (LiveKit SDK) │  (CDN/edge)  │           │  signs media │── ephemeral ───────▶ Redis
+        │        └─────────────┘           │  tokens      │
+        │  token + nearest region                └──────┬──────┘
+        ▼                                          token
+  ┌───────────────────────────────┐
+  │  LiveKit cluster (multi-region,│── recording egress ──▶ object store (S3/GCS) ──▶ signed URL
+  │  autoscaled); each room pinned │
+  │  to one region / node          │
+  └───────────────┬───────────────┘
+                  │ under strict NAT
+                  ▼
+            TURN (coturn cluster)
+```
+
+The point: **media and application are decoupled**. Auth/API only handles "people, meetings, permissions, signing tokens"; media is LiveKit; the frontend is pure static over a CDN.
+
+## 3. Media layer (deep)
+
+**Choice: adopt LiveKit** (cloud or self-hosted k8s). The reasoning is in [the media-layer article](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt) — interactive, needs speed, scales by spreading rooms; self-maintaining simulcast/TURN/autoscaling is not worth it.
+
+Concrete things to enable / configure:
+
+- **simulcast on by default**: each video is sent in multiple qualities, and receivers pick a layer by window size and network. Small tiles take low resolution, cutting a lot of downlink.
+- **multi-region + room affinity**: users join the nearest region; a room is pinned to one region's node (same room, same node — the same principle as your Phase 6 room affinity, just done by LiveKit now).
+- **per-room cap as the gate**: for N people in a room, total downlink ≈ N×(N−1) streams. The cap caps single-room cost and prevents one viral room from crushing a node.
+- **autoscale + graceful drain**: scale nodes by connection count / bandwidth; a node going offline must first stop taking new rooms and let existing rooms wind down.
+- **TURN (coturn)**: roughly 10–20% of users are behind strict NAT / corporate firewalls where plain STUN fails and a relay is needed.
+
+**Capacity sizing approach**: first measure "how many downlink streams a single node can handle at acceptable CPU/bandwidth," then use "streams per room ≈ N²" to back out how many rooms per node, then "target concurrent rooms ÷ rooms per node" for node count, with headroom for regional failover. This beats guessing a node count.
+
+## 4. Identity and access (deep)
+
+- **Login**: Google OIDC first (low friction), plus other social logins; also support **guests** joining by link (with a capability-limited token).
+- **Meetings as database entities** (Postgres): `meeting{ id, code(short), host_id, passcode?, settings, scheduled_start?, expires_at }`. "Share a link" = share the `code`; "create a link" = open a record; "pre-create/schedule" = set `scheduled_start` + a calendar invite.
+- **Roles and permissions**: host / co-host / participant / viewer; the host can lock the room, kick, mute all; an optional lobby (knock to enter).
+- **Token design (key)**: after Auth/API verifies "is this person allowed in this meeting," it signs a **short-lived** media token with claims like:
+
+```
+{ user, room, role:"host", canPublish:true, canScreenshare:true, exp:+10min }
+```
+
+The media layer (LiveKit) only admits and limits capabilities by the token; **the application layer decides the permissions**. This is exactly the grown-up version of Phase 6's "room-level token."
+
+## 5. Data and compliance (standard tier for this scenario)
+
+- TLS everywhere, encryption at rest; recording opt-in, stored in object storage, accessed via signed URLs.
+- GDPR basics: data export/delete, retention policy.
+- **E2EE trade-off**: an SFU must see the media to forward it, so by default **no** E2EE. Doing it requires insertable streams but sacrifices some server-side features (server-side recording/captions) — usually not worth it for this scenario; save it for the enterprise one.
+
+## 6. Frontend / UX
+
+- **Pre-join / lobby**: pick camera and mic, preview, test network, then enter.
+- **Adaptive layout**: grid / spotlight, active-speaker detection, pinning, screen share.
+- **Network quality indicators**: turn per-connection metrics (bitrate/RTT/loss) into a signal-bars icon and a "their network is unstable" hint.
+- **Resilience**: auto-reconnect, network switching (WiFi↔mobile), guidance when permission is denied.
+- **Mobile and accessibility**: responsive design, captions (optional).
+
+## 7. Observability, operations, and cost
+
+- **Metrics**: node-level (rooms/connections/tracks) + per-connection quality — you already collect these in Phase 6, and LiveKit has them built in.
+- **SLOs**: join success rate, media setup time, p95 RTT/loss; with matching alerting rules.
+- **Cost model (the thing to watch here)**: the main cost is **SFU downlink bandwidth** (≈ rooms × N²) + TURN relay traffic + recording storage.
+- **Cost levers**: per-room cap, simulcast layer caps, nearest-region placement, time/headcount limits on the free tier.
+
+## 8. Key risks and failure modes
+
+| Risk | What it looks like | Mitigation |
+|---|---|---|
+| Surge into a popular meeting | start-of-meeting thundering herd, node overload | regional spread, autoscale, join queueing |
+| Region failure | a whole region's rooms drop | cross-region failover, rooms can be reassigned |
+| Abuse (spam/harassment/zoombombing) | strangers barge in, message spam | require login or passcode, rate-limit room creation, host controls (lock/kick/mute-all) |
+| Cost runaway | bill spikes | per-room cap + usage monitoring + alerts |
+
+## 9. Stack at a glance
+
+- **Frontend**: React + LiveKit JS SDK, static over a CDN.
+- **Auth/API**: Go (or Node) + OIDC; signs media tokens.
+- **Media**: LiveKit (cloud, or self-hosted on k8s).
+- **State**: Postgres (meetings/users/permissions), Redis (ephemeral).
+- **NAT**: coturn cluster.
+- **Storage/delivery**: object storage (recordings), CDN (frontend + HLS replay if needed).
+- **Observability**: Prometheus + Grafana.
+
+---
+
+That is the depth of the "open large-scale platform" blueprint. The next two articles apply the same template to the "security-strict enterprise" and the "10k concert."
+
+## glossary
+
+- **simulcast**: sending the same video in multiple qualities at once, so the receiver picks by conditions.
+- **room affinity**: routing the people in one room to the same node, avoiding cross-node forwarding.
+- **TURN / coturn**: a media relay under strict NAT; coturn is a common open-source implementation.
+- **OIDC**: an identity protocol on top of OAuth2; Google login is one example.
+- **SLO**: service-level objective, used to define "what counts as healthy" and drive alerting.
+
+## WebRTC POC series
+
+This is Part 8 of the series, and the first of the "scenario blueprints" (the in-depth follow-up to the decision trilogy).
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+8. **Scenario Blueprint 1: The Complete Strategy for an Open Large-Scale Platform (Meet-like)**
+9. [Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System](/en/blog/webrtc-poc-9-blueprint-secure-enterprise)
+10. [Scenario Blueprint 3: A 10,000-Person Concert Livestream](/en/blog/webrtc-poc-10-blueprint-concert-livestream)
+
+Previous: [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+
+Next: [Scenario Blueprint 2: A Security-Strict Multinational Enterprise Video System](/en/blog/webrtc-poc-9-blueprint-secure-enterprise)
