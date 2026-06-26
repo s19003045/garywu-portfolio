@@ -1,0 +1,150 @@
+---
+title: "From Signaling Relay to SFU: When the Go Server Becomes a WebRTC Endpoint"
+date: "2026-06-26"
+order: 8
+description: "Phase 5 turns the backend from a pure signaling relay into an SFU. Using the Pion server's entry point and data structures, this article looks at the role flip, SFU→Room→peer, and why the concurrency model moves from channels to a mutex."
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Pion", "Concurrency"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+For the previous articles I was learning Go inside the Phase 4 mesh signaling server. This time I took the same learning method to Phase 5 and a clearly harder target: **an SFU (Selective Forwarding Unit) written in Go + Pion**.
+
+If you are not familiar with the phase structure of this project yet, start with the primer: [Before reading this Go series, understand what the WebRTC project is doing](/en/blog/webrtc-poc-go-series-primer).
+
+The goal here is not to explain all of WebRTC, but to record the thing that hit me hardest: **this time the server's identity changed completely**. It is no longer a message relay; it actually becomes one endpoint of the WebRTC connection. Just understanding that shift forced me to re-understand goroutines, `defer`, and why a mutex is suddenly unavoidable here.
+
+## the real shift is that the server's identity changed
+
+The Phase 4 server is a signaling relay: it helps A and B exchange offer, answer, and candidate, but the actual video and audio flow peer-to-peer between A and B. The server never touches media.
+
+The Phase 5 server becomes an SFU: each person opens one connection to the server, uploads their own media to it, and the server forwards it to everyone else in the room.
+
+That sounds like "just doing a bit more," but it brings a side effect I did not expect — **the negotiation roles flip**:
+
+| | who sends offer | who sends answer |
+|---|---|---|
+| Phase 4 (mesh) | client | another client |
+| Phase 5 (SFU) | **server** | client |
+
+The AI made me memorize this table up front. It turned out to be the right anchor, because reading `main.go`, the data structures, and `handleWS` afterwards all mapped back to "the server is now a WebRTC endpoint." With that anchor in place, the code had somewhere to land.
+
+## the entry point main.go: a background loop I almost misread
+
+As usual the AI started me at the entry point, `phase-5/server/main.go`. Compared to Phase 4, main has two new things: it calls `buildAPI()` then `newSFU(api)`, and it starts a background loop:
+
+```go
+go func() {
+    t := time.NewTicker(3 * time.Second)
+    defer t.Stop()
+    for range t.C {
+        sfu.dispatchKeyFrames()
+    }
+}()
+```
+
+The AI asked me only two small things first: what is that trailing `()` in `go func(){ ... }()`, and does `for range t.C` ever end on its own?
+
+The `()` I could answer — it is like a JavaScript IIFE: define an anonymous function and call it immediately, with `go` sending that call to the background. But I got the second one wrong, and the way I was wrong is very representative.
+
+## I had the lifetime of this loop backwards
+
+My original reasoning was: after the loop runs for a while, `defer t.Stop()` fires, the ticker stops, the channel closes, and the loop ends.
+
+The AI did not just tell me I was wrong; it told me to check the docs. `go doc time.Ticker.Stop` says it plainly:
+
+> Stop turns off a ticker. After Stop, no more ticks will be sent. **Stop does not close the channel**.
+
+That one line broke my causal chain. A `for range channel` only ends when the channel is closed, and `Stop()` explicitly does not close it, so:
+
+- `for range t.C` is a genuine infinite loop; this function never returns.
+- Since the function never returns, `defer t.Stop()` in this program effectively never runs.
+- This goroutine's lifetime equals the program's lifetime.
+
+And precisely because this loop never returns, `go` here is **mandatory**, not optional — without it, main would block here forever and never reach `http.ListenAndServe`, so the server would never start. I used to think `go` was just "spin up a background task on the side"; here it is "do this or nothing works."
+
+## SFU → Room → peer: where the state lives this time
+
+Then the data structures. Phase 5 has a clean three-layer shape:
+
+- `SFU` holds many `Room`s
+- a `Room` holds many `peer`s, plus a registry of forwardable uploaded tracks
+- a single `peer` is "one WebSocket" plus "one server-side PeerConnection"
+
+That last point is the key. The Phase 4 server never had a PeerConnection because it did not participate in WebRTC. The Phase 5 server opens its own `pc` for every connected person, holding N of them at once, one per client, each talking one-to-one with its own browser. That is the most concrete picture of "the server is now a WebRTC endpoint."
+
+## why a mutex is suddenly necessary
+
+There is a design choice here that directly contradicts Phase 4. The Phase 4 `Hub` comment proudly says "the `rooms` map is only ever touched by a single goroutine, so no mutex is needed." But in Phase 5, both `SFU` and `Room` carry a `sync.Mutex`.
+
+The AI asked me to figure out why.
+
+At first I only thought of "many people connect at once, so multiple places want to mutate the same `peers`." True, but only one of the sources. Later I saw that Phase 5's shared state is read and written directly by four kinds of goroutine:
+
+1. each connection's read loop (`net/http` spawns a goroutine per request)
+2. each uploaded track's RTP-copying loop
+3. Pion's internal callbacks (`OnICECandidate`, `OnConnectionStateChange` are invoked by Pion on its own goroutines)
+4. that 3-second background ticker
+
+The point is not "Phase 5 has more goroutines" — Phase 4 had plenty too. The real difference is: **Phase 4 locks the state behind a single owner; Phase 5 has no single owner, the state is shared.**
+
+And Go maps are not safe for concurrent read/write. Two goroutines writing the same map and the Go runtime kills the whole program with `fatal error: concurrent map writes`. So this kind of "many sources sharing state" must be serialized, and Phase 5's tool of choice is the mutex.
+
+In other words, Phase 4 shares memory **by communicating**, Phase 5 shares memory **with locking** — both are idiomatic Go; the difference is whether the state has a single owner.
+
+## two directions you should not conflate: signaling role vs media role
+
+In `handleWS`, the AI caught another confusion of mine. Before sending an offer, the server adds two `recvonly` transceivers per person, one for video and one for audio, to receive their upload.
+
+The AI asked: since the server will send an offer that says "these two are receive-only," what role does the client then play?
+
+I said "receiver." Wrong. There are two independent directions here and I had merged them into one:
+
+| axis | what it asks | who is who here |
+|---|---|---|
+| **signaling role** | who sends offer, who sends answer | server sends offer, client sends answer |
+| **media role** | which way the RTP flows (who sends, who receives) | server receives, **client sends** |
+
+The server is `recvonly` (receive). A track that has a receiver must have a sender, and the only sender here is the client — it uploads its camera and microphone. So for these two tracks, **the client is the sender, not the receiver**. It is simultaneously the "answerer in signaling" and the "sender in media," and there is no contradiction.
+
+## my understanding of defer was actually inverted
+
+The biggest conceptual fix on this trip was `defer`.
+
+I used to think `defer` does not always run — that it only runs when an error is thrown. It turns out I had it backwards:
+
+- a **normal return** runs deferred calls too (the common case I had been missing)
+- a **panic** runs them too (which is why `recover()` lives inside a defer)
+- the cases where they really do not run are "the program returned early, before reaching that `defer` line," or "the whole process is force-terminated" (like that `concurrent map writes` fatal error, where no defers ran)
+
+This fix is not just a trivia patch. Precisely because I believed "a normal return does not run defers," I had missed a key fact: the `addTrack` that registers a track has a `defer` that triggers a whole-room re-sync every time someone uploads a track. Only after fixing my mental model of defer did the SFU's event flow finally read smoothly. (I will go into that part in the next article.)
+
+## verifying against real output
+
+Everything in this article ties back to evidence I can rerun, not just claims:
+
+- `go doc time.Ticker.Stop` literally says "does not close the channel," confirming that loop is infinite.
+- a minimal program with dozens of goroutines writing the same map without a lock crashes with `fatal error: concurrent map writes`; add a `sync.Mutex` back and it runs cleanly five times in a row. That makes "why a lock is non-negotiable" tangible.
+- running `go test`, the server log prints `room=... received uploaded track kind=video` — the hard proof of "client sends, server receives," which also confirms the media role.
+
+For me, being able to map a concept onto code that either crashes or prints a specific log line settles the understanding far better than any definition.
+
+## if you want to learn this way too
+
+When reading a system with this kind of "role flip," I think these questions work especially well:
+
+1. how is this component's identity fundamentally different from the previous version
+2. how long does a background loop live, and what ends it
+3. does this shared state have a single owner, and why does it (or does it not) need a lock
+4. how many "directions" are actually in play here, and what does each one describe
+5. which cheapest experiment would best disprove my current assumption
+
+Each of these gets you a more learnable answer than "please explain this file."
+
+## English version note
+
+This English article mirrors the structure of the Chinese version; wording may keep evolving as the bilingual series is refined.
+
+Previous: [In the AI agent era, how to learn a new programming language more actively](/en/blog/active-learning-new-language-with-ai-agent)
+
+Next: [The Heart of an SFU: Track Forwarding, Renegotiation, and the "Sixth Person" Bug](/en/blog/sfu-track-forwarding-and-renegotiation)

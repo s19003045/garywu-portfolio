@@ -1,0 +1,155 @@
+---
+title: "SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法"
+date: "2026-06-27"
+order: 9
+description: "接續上一篇，深入 Phase 5 SFU 的核心：syncPeer 怎麼把別人的影像轉發給你又不送回你自己、為什麼要重新協商、第 6 人 bug 的成因與修法，以及 RTP 到底在哪裡被搬運。"
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Pion", "除錯"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+[上一篇](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)我看懂了「伺服器變成 WebRTC 一端」這個身分轉變，以及隨之而來的資料結構與 mutex。這篇繼續往裡走，看 Phase 5 SFU 真正的心臟：**怎麼把房裡其他人的影像轉發給你**。
+
+這段是整個 server 最難、也最有故事的地方。它牽涉三件事：怎麼決定「該轉哪些 track 給誰」、為什麼每次都要重新協商、以及一個曾經很經典的 bug——「第 6 個人只看得到自己」。最後我才終於看到 RTP 封包被搬運的那幾行程式。
+
+## 心臟函式 syncPeer 在做什麼
+
+轉發的核心是 `syncPeer`。一句話描述它：**對某一個 peer，把它「應該轉發出去的 track 集合」校正到正確狀態——缺的補上、該移的移掉，有變動就重新發一次 offer。**
+
+要看懂它，得先分清 Pion 的兩個詞，這也是我一開始最虛的地方。它們都掛在「伺服器為這個 peer 開的那條 `pc`」上，所以一切都從這個 peer 的視角看：
+
+- `GetReceivers()`：伺服器**從這個 peer 收**的 track，也就是他自己上傳的鏡頭、麥克風。
+- `GetSenders()`：伺服器**送給這個 peer**的 track，也就是別人被轉發下來的影像。
+
+把這兩個詞對上「收 / 送」之後，後面的邏輯就清楚多了。
+
+## 最巧妙的一招：不要把你自己的影像送回給你
+
+`syncPeer` 裡有個我覺得很漂亮的設計。它會先建一個 `existing` 集合，把這個 peer 的 senders 放進去，**也把它自己的 receivers 放進去**：
+
+```go
+existing := map[string]bool{}
+// ... 把 senders 的 track ID 放進 existing ...
+for _, receiver := range p.pc.GetReceivers() {
+    existing[receiver.Track().ID()] = true // 自己上傳的，也算「已存在」
+}
+// 房內所有 track，凡是 existing 沒有的，才補轉發
+for id, local := range r.trackLocals {
+    if !existing[id] {
+        p.pc.AddTrack(local)
+    }
+}
+```
+
+關鍵就是那一行「把自己的 receivers 也算進 existing」。這樣遍歷全房 track 時，這個 peer **自己上傳的那條**因為已經在 `existing` 裡，就會被跳過、不會再轉發給它——這就是「不把你自己的影像送回給你」的實作。
+
+AI 給我一個追蹤情境練習：房裡有 A、B 兩人，各上傳一條 video，所以全房 track 是 `{A_vid, B_vid}`。對 A 跑 `syncPeer`：`existing` 經過上面那步會變成 `{A_vid}`；接著遍歷 `{A_vid, B_vid}`，`A_vid` 在 existing 裡被跳過，`B_vid` 不在、被 `AddTrack` 給 A。所以 **A 會拿到 B 的影像，但不會拿到自己的**。這正是 SFU 存在的理由。
+
+## 一個我差點沒發現的隱藏依賴
+
+這套「用 ID 比對來避免回送自己」能成立，其實完全依賴另一個更早的決定。建立轉發用 local track 的 `addTrack`，是用來源 track 的 `t.ID()` 來建的——也就是說，轉發 track 跟來源 track **共用同一個 ID**。
+
+AI 問我：如果當初改成「每條轉發 track 都給一個全新隨機 ID」，會怎樣？
+
+我想了一下：那 A 的 receiver 報的還是原始來源 ID，但 `trackLocals` 的 key 變成新 ID，兩邊就對不上了。比對時會誤判「A 自己的影像不存在」，於是又把 A 的影像 `AddTrack` 回給 A。
+
+這題讓我學到一件事：很多看起來理所當然的行為，背後常常壓著一個「在別處做的小決定」。把那個隱藏依賴找出來，比記住表面邏輯重要得多。
+
+## 為什麼不能「想重發 offer 就立刻重發」
+
+接著是重新協商。WebRTC 的協商是一來一回：伺服器發了 offer，必須等 client 回 answer、狀態回到 `stable`，才能發下一個 offer。如果在「還在等 answer」時硬塞第二個 offer，就會撞車（glare）出錯。
+
+所以 `syncPeer` 最前面有一道檢查：如果這個 peer 還不是 `stable`，就先標記 `needsReneg = true`、直接 return，**不在這裡硬發 offer，也不卡住其他 peer**。那被跳過的同步什麼時候補做？答案在 `onAnswer`：收到 client 的 answer、`SetRemoteDescription` 之後狀態回到 stable，這時若 `needsReneg` 還亮著，就趁現在再呼叫一次 `syncPeer`。
+
+AI 用一個情境讓我自己走一遍：對 A 發了 offer、還在等 answer 時，C 加入並上傳了影像。這一輪 `syncPeer(A)` 因為 A 非 stable 而直接 return，A 不會馬上拿到 C 的影像；要等 A 的 answer 回來，`onAnswer` 裡的 `needsReneg` 補跑 `syncPeer(A)`，A 才真的被 `AddTrack` 上 C 的影像。**補做的人是 `onAnswer`**。這條「交棒」看懂之後，協商的時序我才真的踏實。
+
+## 「第 6 人只看到自己」是怎麼來的
+
+這是 Phase 5 最有價值的一個 bug 故事。
+
+舊做法（沿用 Pion 範例）的 `signalPeerConnections` 是一個「從頭掃到尾」的迴圈，而且有個致命設計：**只要掃到任何一個還在協商中的 peer，就放棄這一輪、整個迴圈從第一個 peer 重新來過。**
+
+AI 給我一個很好懂的比喻：老師點名，規則是「只要點到一個還沒準備好的學生，就得從第 1 號重新點起」。如果前面幾號一直慢吞吞，老師就會卡在前段反覆重來，**永遠點不到最後一號**。
+
+對應到房間：當第 6 個人最後加入、排在迴圈最末端，而前面有人協商還沒完成時，舊做法會一直從頭重來、走不到第 6 人，於是他沒被 `AddTrack` 任何人的 track——這就是「第 6 人只看到自己」。
+
+新做法的兩個關鍵改動：
+
+1. **逐一獨立處理**：忙碌的 peer 只被「跳過」並標記 `needsReneg`，不再讓整個迴圈重來。排最後的新加入者一定會被處理到，不會被餓死。
+2. **只在 track 真的變動時才重發 offer**：避免無謂的協商風暴。
+
+被跳過的人，再靠前面那段 `onAnswer` 的交棒補上，所以晚一點也不會漏掉。
+
+## RTP 到底在哪裡被搬運
+
+講了這麼多「轉發」，但「收」和「送」的那幾行，到現在才看到。就在 `OnTrack` 回呼裡：
+
+```go
+buf := make([]byte, 1500) // 1500 ≈ 一個網路封包大小
+for {
+    i, _, readErr := t.Read(buf)        // 從這個 peer 的上傳讀一個 RTP 封包
+    if readErr != nil {
+        return                          // 讀不到了（關鏡頭 / 斷線）→ 結束
+    }
+    local.Write(buf[:i])                // 寫進可轉發的 local，Pion 自動扇出給訂閱者
+}
+```
+
+這裡的 `local`，就是前面 `syncPeer` 拿去 `AddTrack` 給別人的同一個物件。所以「轉發」的本質就是：`t.Read` 把封包從上傳端讀出來，`local.Write` 寫進去，Pion 再幫你送給所有訂閱了這條 `local` 的人。
+
+AI 問我一個我答錯的問題：一個 client 上傳 video + audio，這個 `for` 迴圈會不會兩條共用一個 goroutine？我猜「共用」。但用我已經會的東西反推就知道不可能——這個 `for` 是無窮迴圈，只有 read error 才會用 `return` 跳出。如果兩條共用一個 goroutine，video 的迴圈會先卡死整個 goroutine，audio 永遠跑不到。所以**每條 track 必須各自一個 goroutine**。
+
+這次我們直接去翻 Pion 原始碼驗證，在 `peerconnection.go` 找到 `go handler(t, r)`——OnTrack 回呼確實是用 `go` 開的，每條 track 各一個 goroutine。我之前的猜測，被原始碼直接否定。
+
+## 我以為的漏洞，其實不存在
+
+我一度以為這裡有個漏洞：如果 A、B、C 都先在房裡、誰都還沒分享，過一陣子 A 才開始分享，程式裡好像沒有把 A 的 track 丟給 B、C 的地方。
+
+但答案就藏在 `addTrack` 裡，那個我上一篇修對 `defer` 之後才看到的東西：
+
+```go
+defer func() {
+    r.lock.Unlock()
+    r.signalPeerConnections() // 登記完新 track，立刻通知全房重新同步
+}()
+```
+
+`signalPeerConnections` 不是只在「有人 join」時才跑。任何 track 變動——包括「A 後來才分享」——都會經由 `addTrack` 的這個 defer 觸發全房同步，於是 B、C 就被補上 A 的影像。「B、C 後加入」和「A 後分享」用的是同一套機制，只是被不同事件觸發。沒有漏洞。
+
+順帶一提，這個 defer 是「先解鎖、再呼叫 `signalPeerConnections`」。因為 `signalPeerConnections` 自己又會去搶同一把鎖，如果不先解鎖就呼叫它，就會自己鎖自己（deadlock）。鎖只保護「改 map」那一小段，真正耗時的協商工作放到鎖外面做。
+
+## 回到測試驗證
+
+這篇的每個重點，都有可重跑的證據：
+
+- `TestSFUManyClients`：6 個 client 進同房，斷言 client 0 到 5 **每個人都收到其他 5 條 track**。特別看 client 5——它就是那個曾經「只看到自己」的第 6 人，現在穩穩收到 5 條。這支測試就是這個 bug 的回歸守門員。
+- `TestSFUForwardsMedia`：兩個真實 Pion client，驗證雙方都收到對方經 SFU 轉發的 track，證明真的在轉發媒體、不只是信令。
+- Pion 原始碼裡的 `go handler(t, r)`：證明每條 track 各一個 goroutine。
+
+能把「第 6 人 bug 修好了」變成一條會印出「client 5 收到 5 條 track ✅」的測試，比任何口頭保證都讓我安心。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+讀這種「核心轉發 + 狀態機」的程式時，這幾個問題最有用：
+
+1. 這個集合（或這個 map）到底在記什麼，為什麼要包含「自己」
+2. 這個狀態機在什麼狀態下不能做某件事，被擋下來的工作之後由誰補
+3. 這個看起來理所當然的行為，背後依賴哪個別處做的決定
+4. 這段邏輯是被哪些事件觸發的，是不是不只一個入口
+5. 哪支測試最能證明這個 bug 真的被修好
+
+把問題問到「事件流」和「狀態機」的層次，比逐行解釋更能讓你看懂一個系統為什麼這樣設計。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+8. [從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)
+9. **SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法**
+
+上一篇：[從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)

@@ -1,0 +1,158 @@
+---
+title: "從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端"
+date: "2026-06-26"
+order: 8
+description: "Phase 5 把後端從『只轉信令』推進成 SFU。這篇用 Pion server 的入口與資料結構，看角色翻轉、SFU→Room→peer，以及併發模型為什麼從 channel 改成 mutex。"
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Pion", "並行"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+前面幾篇我都在 Phase 4 的 mesh 信令 server 裡學 Go。這次我把同一套學習方式帶到 Phase 5，挑戰一個明顯更難的題目：**用 Go + Pion 寫的 SFU（Selective Forwarding Unit）**。
+
+如果你還不熟這個專案的 phase 結構，建議先看前導文：[讀這個 Go 系列前，先看懂 WebRTC 專案在做什麼](/zh/blog/webrtc-poc-go-series-primer)。
+
+這篇的目標不是把 WebRTC 講完，而是記錄一件對我衝擊最大的事：**這次的伺服器，身分整個變了**。它不再只是訊息轉發站，而是真的變成 WebRTC 連線的一端。光是看懂這個轉變，就連帶讓我重新理解了 goroutine、`defer`，還有「為什麼這次非用 mutex 不可」。
+
+## 這次最大的轉變，其實是伺服器的身分變了
+
+Phase 4 的 server 是一個「信令轉發站」：它幫 A、B 交換 offer、answer、candidate，但真正的影像和聲音是 A、B 點對點直接傳，伺服器從頭到尾沒碰過媒體。
+
+Phase 5 的 server 變成 SFU：每個人只跟伺服器開一條連線，把自己的影像上傳給伺服器，再由伺服器轉發給房裡其他人。
+
+這個差別聽起來只是「多做一點事」，但它帶來一個我一開始沒料到的副作用——**協商角色翻轉了**：
+
+| | 誰發 offer | 誰回 answer |
+|---|---|---|
+| Phase 4（mesh） | client | 另一個 client |
+| Phase 5（SFU） | **server** | client |
+
+AI 一開始就要我記住這張表。後來證明這是對的，因為接下來看 `main.go`、看資料結構、看 handleWS，每一步都能對回「伺服器自己變成 WebRTC 一端」這件事。先有這個錨點，後面的程式才有落點。
+
+## 入口 main.go：一個我差點看錯的背景迴圈
+
+AI 照慣例先帶我從入口 `phase-5/server/main.go` 看起。相較 Phase 4，main 多了兩段新東西：先 `buildAPI()` 再 `newSFU(api)`，以及一個背景迴圈：
+
+```go
+go func() {
+    t := time.NewTicker(3 * time.Second)
+    defer t.Stop()
+    for range t.C {
+        sfu.dispatchKeyFrames()
+    }
+}()
+```
+
+AI 先只問我兩件小事：`go func(){ ... }()` 結尾那個 `()` 在做什麼？還有 `for range t.C` 會不會自己結束？
+
+`()` 我答得出來——它很像 JavaScript 的 IIFE，定義一個匿名函式並立刻呼叫，`go` 再把它丟到背景跑。但第二題我答錯了，而且錯得很有代表性。
+
+## 我一開始把這個迴圈的壽命想反了
+
+我原本的推論是：迴圈跑一陣子後，`defer t.Stop()` 會被觸發，計時器停掉、channel 關閉，迴圈就結束了。
+
+AI 沒有直接說我錯，而是叫我去查官方文件。`go doc time.Ticker.Stop` 寫得很白：
+
+> Stop turns off a ticker. After Stop, no more ticks will be sent. **Stop does not close the channel**.
+
+這一行把我的因果鏈打斷了。`for range channel` 只有在 channel 被 close 時才會結束，而 `Stop()` 明說它不會 close channel，所以：
+
+- `for range t.C` 是一個真正的無窮迴圈，這個函式永遠不會回傳。
+- 既然函式不回傳，`defer t.Stop()` 在這支程式裡其實永遠不會被執行。
+- 這個 goroutine 的壽命，等於整支程式的壽命。
+
+也因為這個迴圈永遠不回傳，這裡才**非用 `go` 不可**——否則 main 會卡在這裡，永遠跑不到下面的 `http.ListenAndServe`，伺服器根本起不來。我原本以為 `go` 只是「順便開背景」，其實這裡是「不開不行」。
+
+## SFU → Room → peer：這次狀態住在哪裡
+
+接著看資料結構。Phase 5 是清楚的三層：
+
+- `SFU` 裝著很多 `Room`
+- `Room` 裝著很多 `peer`，外加一份「可轉發的上傳 track」清單
+- 一個 `peer`，就是「一條 WebSocket」加上「一個伺服器端的 PeerConnection」
+
+最後這點是關鍵。Phase 4 的 server 從來沒有 PeerConnection，因為它不參與 WebRTC。Phase 5 的 server 對每一個連進來的人都開一條自己的 `pc`，同時握著 N 條，一人一條，各自跟各自的瀏覽器一對一對話。這就是「伺服器變成 WebRTC 一端」最具體的樣子。
+
+## 為什麼這次突然需要 mutex
+
+這裡有個跟 Phase 4 正面衝突的設計。Phase 4 的 `Hub` 註解很自豪地寫著「`rooms` map 永遠只被一個 goroutine 觸碰，完全不需要 mutex」。但 Phase 5 的 `SFU` 和 `Room` 裡，**各塞了一個 `sync.Mutex`**。
+
+AI 要我自己想：為什麼？
+
+我一開始只想到「多人同時連進來，會有多個地方想動同一份 `peers`」。這對，但只是其中一個源頭。後來我才看清，Phase 5 的共享狀態其實被四種 goroutine 直接讀寫：
+
+1. 每條連線各自的讀取迴圈（`net/http` 對每個請求各開一個 goroutine）
+2. 每條上傳 track 的 RTP 搬運迴圈
+3. Pion 內部回呼（`OnICECandidate`、`OnConnectionStateChange` 是 Pion 用它自己的 goroutine 呼叫你的）
+4. 那個每 3 秒一次的背景 ticker
+
+關鍵不是「Phase 5 的 goroutine 比較多」——Phase 4 也有一堆 goroutine。真正的差別是：**Phase 4 把狀態關進單一 owner，Phase 5 沒有單一 owner，狀態被共用了**。
+
+而 Go 的 map 對並行讀寫是不安全的。兩個 goroutine 同時寫同一個 map，Go runtime 會直接 `fatal error: concurrent map writes` 把整支程式打死。所以這種「多源頭共用狀態」一定要串行化，而 Phase 5 選的手段就是 mutex。
+
+換句話說，Phase 4 是 share memory **by communicating**，Phase 5 是 share memory **with locking**——兩種都是正統 Go，差別在「狀態有沒有單一 owner」。
+
+## 兩個方向不要混：信令角色 vs 媒體角色
+
+進到 handleWS，AI 點出我另一個混淆。伺服器在發 offer 之前，會先替每個人加兩個「只收」（recvonly）的 transceiver，準備接收他上傳的 video 和 audio。
+
+AI 問我：既然伺服器等下會對 client 發 offer，而 offer 裡寫著「我這兩條只收」，那 client 會扮演什麼角色？
+
+我答「接收方」。錯了。這裡有兩個各自獨立的方向，我把它們混成一個：
+
+| 軸 | 問的是 | 這裡是誰 |
+|---|---|---|
+| **信令角色** | 誰發 offer、誰回 answer | server 發 offer、client 回 answer |
+| **媒體角色** | RTP 往哪流（誰送、誰收） | server 只收、**client 送** |
+
+伺服器是 recvonly（只收），一條 track 既然有人收，就得有人送，那送的人只能是 client——也就是 client 把鏡頭、麥克風上傳。所以對這兩條 track，**client 是發送方，不是接收方**。它同時是「信令上的 answerer」和「媒體上的 sender」，一點都不矛盾。
+
+## 我對 defer 的理解，其實一直是反的
+
+這趟最大的觀念修正，是 `defer`。
+
+我原本以為 `defer` 不一定會跑，只有在拋出錯誤時才會跑。後來才發現我把它想反了：
+
+- 函式**正常 return** 也會跑 defer（這是我之前漏掉的最常見情況）
+- 函式 **panic** 也會跑 defer（所以 `recover()` 都寫在 defer 裡）
+- 真正不會跑的情況，是「程式還沒執行到那行 defer，就提早 return 了」，或是「整個 process 被強制終止」（像前面那個 `concurrent map writes` 的 fatal error，所有 defer 都沒跑）
+
+這個修正不只是補一個冷知識。正因為我之前以為「正常結束不會跑 defer」，我才一直沒注意到一個關鍵事實：登記 track 的 `addTrack` 裡有一個 `defer`，會在每次有人上傳 track 時觸發全房重新同步。把 defer 的心智模型修對之後，整個 SFU 的事件流我才真的看順。（這部分我留到下一篇細談。）
+
+## 回到執行結果驗證
+
+這篇講的每件事，我們都回到可以重跑的證據，而不是停在嘴上：
+
+- `go doc time.Ticker.Stop` 親口說「does not close the channel」，確認那個迴圈是無窮的。
+- 寫一支最小程式，讓幾十個 goroutine 同時寫同一個 map、不加鎖，跑起來就是 `fatal error: concurrent map writes`，直接崩潰；把 `sync.Mutex` 加回去，連跑五次都穩。這讓「為什麼非鎖不可」變得很有體感。
+- 跑 `go test`，伺服器的 log 印出 `room=... 收到上傳 track kind=video`——這就是「client 送、server 收」的鐵證，也順手驗證了媒體角色。
+
+對我來說，能把概念對回一段會崩潰、或會印出特定 log 的程式，比任何定義都更能讓理解定下來。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+讀這種「角色翻轉」的系統時，我覺得特別適合問 AI 這幾題：
+
+1. 這個元件的身分，跟上一個版本比有什麼根本不同
+2. 一個背景迴圈的壽命有多長，靠什麼結束
+3. 這份共享狀態有沒有單一 owner，為什麼需要（或不需要）鎖
+4. 這裡的「方向」其實有幾個，分別在講什麼
+5. 哪個最便宜的實驗，最能否定我現在的假設
+
+這些問題都比「請解釋這個檔案」更容易換到能真正學會的答案。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+8. **從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端**
+9. [SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法](/zh/blog/sfu-track-forwarding-and-renegotiation)
+
+上一篇：[在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+
+下一篇：[SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法](/zh/blog/sfu-track-forwarding-and-renegotiation)

@@ -1,0 +1,147 @@
+---
+title: "The Heart of an SFU: Track Forwarding, Renegotiation, and the \"Sixth Person\" Bug"
+date: "2026-06-27"
+order: 9
+description: "Continuing from the previous article, this goes into the core of the Phase 5 SFU: how syncPeer forwards other people's video to you without echoing your own back, why renegotiation is needed, the cause and fix of the sixth-person bug, and where the RTP is actually copied."
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Pion", "Debugging"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+In the [previous article](/en/blog/sfu-server-webrtc-endpoint-and-mutex) I understood the identity shift of "the server becoming a WebRTC endpoint," along with the data structures and the mutex that come with it. This one goes deeper, into the real heart of the Phase 5 SFU: **how it forwards everyone else's video to you**.
+
+This is the hardest and most story-rich part of the whole server. It involves three things: deciding "which tracks to forward to whom," why every change requires renegotiation, and a once-classic bug — "the sixth person only sees themselves." Only at the end did I finally see the few lines where the RTP packets are actually moved.
+
+## what the heart function syncPeer does
+
+The core of forwarding is `syncPeer`. In one sentence: **for a single peer, bring its set of "tracks it should be forwarding out" to the correct state — add what is missing, remove what is gone, and if anything changed, send a fresh offer.**
+
+To read it, you first have to separate two Pion terms, which was where I felt most shaky at first. Both hang off "the `pc` the server opened for this peer," so everything is from this peer's point of view:
+
+- `GetReceivers()`: tracks the server **receives from this peer** — their own uploaded camera and microphone.
+- `GetSenders()`: tracks the server **sends to this peer** — other people's video being forwarded down.
+
+Once you map those two terms onto "receive / send," the rest of the logic gets much clearer.
+
+## the clever trick: do not send your own video back to you
+
+`syncPeer` has a design I find quite elegant. It first builds an `existing` set, puts this peer's senders into it, **and also puts its own receivers into it**:
+
+```go
+existing := map[string]bool{}
+// ... put the senders' track IDs into existing ...
+for _, receiver := range p.pc.GetReceivers() {
+    existing[receiver.Track().ID()] = true // your own upload also counts as "exists"
+}
+// only forward room tracks that existing does not already have
+for id, local := range r.trackLocals {
+    if !existing[id] {
+        p.pc.AddTrack(local)
+    }
+}
+```
+
+The key is that line that also counts the peer's own receivers as `existing`. That way, when iterating over all room tracks, the peer's **own uploaded track** is already in `existing` and gets skipped — never forwarded back to it. That is the implementation of "do not send your own video back to you."
+
+The AI gave me a tracing exercise: the room has A and B, each uploading one video, so the room tracks are `{A_vid, B_vid}`. Running `syncPeer` on A: after the step above, `existing` becomes `{A_vid}`; then iterating `{A_vid, B_vid}`, `A_vid` is skipped because it is in existing, and `B_vid` is not, so it gets `AddTrack`-ed to A. So **A receives B's video but not its own**. That is exactly why an SFU exists.
+
+## a hidden dependency I almost missed
+
+This whole "use ID comparison to avoid echoing yourself" only works because of an earlier decision. The `addTrack` that builds the forwardable local track builds it using the source track's `t.ID()` — meaning the forwarded track and the source track **share the same ID**.
+
+The AI asked: what if it had instead given every forwarded track a brand-new random ID?
+
+I thought about it: then A's receiver still reports the original source ID, but `trackLocals` is keyed by the new ID, and the two no longer match. The comparison would wrongly decide "A's own video does not exist" and `AddTrack` A's video back to A.
+
+That question taught me something: a lot of behavior that looks obvious is actually resting on "a small decision made somewhere else." Finding that hidden dependency matters far more than memorizing the surface logic.
+
+## why you cannot just re-offer whenever you feel like it
+
+Then renegotiation. WebRTC negotiation is one round trip: the server sends an offer and must wait for the client's answer and for the state to return to `stable` before sending the next offer. Forcing a second offer while still waiting for the answer causes glare and errors.
+
+So the very top of `syncPeer` has a guard: if this peer is not `stable` yet, mark `needsReneg = true` and return immediately — **do not force an offer here, and do not block the other peers**. When does the skipped sync get done? In `onAnswer`: after receiving the client's answer and `SetRemoteDescription`, the state returns to stable, and if `needsReneg` is still set, it calls `syncPeer` again right then.
+
+The AI had me walk a scenario myself: while an offer to A is out and still awaiting its answer, C joins and uploads video. That round of `syncPeer(A)` returns immediately because A is not stable, so A does not get C's video yet; only when A's answer comes back does `onAnswer`'s `needsReneg` re-run `syncPeer(A)`, and A finally gets `AddTrack`-ed with C's video. **The one that finishes the job is `onAnswer`.** Once I saw that hand-off, the timing of negotiation finally felt solid.
+
+## where "the sixth person only sees themselves" came from
+
+This is the most valuable bug story in Phase 5.
+
+The old approach (inherited from the Pion example), `signalPeerConnections`, was a "scan from start to end" loop with one fatal design: **as soon as it hit any peer still mid-negotiation, it abandoned that round and restarted the whole loop from the first peer.**
+
+The AI gave me an easy analogy: a teacher taking roll, with the rule "as soon as you reach a student who is not ready, start over from number 1." If the early numbers keep dragging, the teacher keeps restarting at the front and **never reaches the last number.**
+
+Mapped onto the room: when the sixth person joins last and sits at the end of the loop while someone earlier is still negotiating, the old approach keeps restarting from the top and never reaches the sixth person, who therefore gets no one's track `AddTrack`-ed — "the sixth person only sees themselves."
+
+The two key changes in the new approach:
+
+1. **Process each peer independently**: a busy peer is merely skipped and marked `needsReneg`, instead of restarting the whole loop. The last-joined newcomer always gets processed and never starves.
+2. **Only re-offer when the track set actually changed**: avoid a pointless renegotiation storm.
+
+The skipped peer is then caught up via the `onAnswer` hand-off above, so nothing is dropped even if it happens a bit later.
+
+## where the RTP is actually moved
+
+After all this talk of "forwarding," the lines that actually "receive" and "send" only show up now, inside the `OnTrack` callback:
+
+```go
+buf := make([]byte, 1500) // 1500 ≈ one network packet
+for {
+    i, _, readErr := t.Read(buf)        // read one RTP packet from this peer's upload
+    if readErr != nil {
+        return                          // can't read anymore (camera off / disconnect) → end
+    }
+    local.Write(buf[:i])                // write into the forwardable local; Pion fans it out
+}
+```
+
+This `local` is the very same object that `syncPeer` `AddTrack`s to others. So "forwarding" boils down to: `t.Read` pulls the packet from the upload side, `local.Write` writes it in, and Pion delivers it to everyone subscribed to this `local`.
+
+The AI asked a question I got wrong: if a client uploads video + audio, do the two `for` loops share one goroutine? I guessed "shared." But you can disprove it with what you already know — this `for` is an infinite loop that only exits via `return` on a read error. If the two shared one goroutine, the video loop would jam the whole goroutine and audio would never run. So **each track must have its own goroutine.**
+
+This time we went straight to the Pion source to verify, and found `go handler(t, r)` in `peerconnection.go` — the OnTrack callback is indeed launched with `go`, one goroutine per track. My guess was disproven by the source itself.
+
+## the gap I thought I found does not exist
+
+For a moment I thought there was a hole: if A, B, and C are all already in the room with nobody sharing, and A only starts sharing later, the code seemed to have no place that hands A's track to B and C.
+
+But the answer is hidden in `addTrack` — the thing I only saw after fixing my mental model of `defer` in the previous article:
+
+```go
+defer func() {
+    r.lock.Unlock()
+    r.signalPeerConnections() // after registering the new track, immediately re-sync the whole room
+}()
+```
+
+`signalPeerConnections` does not only run when someone joins. Any track change — including "A shares later" — triggers a whole-room sync through this `defer` in `addTrack`, so B and C get A's video added. "B and C join later" and "A shares later" use the same mechanism, just triggered by different events. No gap.
+
+By the way, this defer "unlocks first, then calls `signalPeerConnections`." Because `signalPeerConnections` grabs the same lock again, calling it without unlocking first would deadlock against itself. The lock only protects the small "mutate the map" section; the time-consuming negotiation work happens outside the lock.
+
+## verifying against tests
+
+Every point in this article has rerunnable evidence:
+
+- `TestSFUManyClients`: six clients join one room, asserting that clients 0 through 5 **each receive the other five tracks**. Look especially at client 5 — that is the sixth person who used to "only see themselves," now solidly receiving five. This test is the regression guard for that bug.
+- `TestSFUForwardsMedia`: two real Pion clients, verifying both receive the other's track forwarded by the SFU — proof that media is actually being forwarded, not just signaling.
+- `go handler(t, r)` in the Pion source: proof that each track gets its own goroutine.
+
+Turning "the sixth-person bug is fixed" into a test that prints "client 5 received 5 tracks ✅" reassures me far more than any verbal guarantee.
+
+## if you want to learn this way too
+
+When reading "core forwarding plus a state machine" code, these questions help the most:
+
+1. what is this set (or this map) actually recording, and why does it need to include "myself"
+2. in which state can this state machine not do a certain thing, and who finishes the blocked work later
+3. what decision made elsewhere does this seemingly obvious behavior depend on
+4. which events trigger this logic — is there really only one entry point
+5. which test best proves this bug is actually fixed
+
+Pushing your questions to the level of "event flow" and "state machine" reveals why a system is designed the way it is, far better than a line-by-line explanation.
+
+## English version note
+
+This English article mirrors the structure of the Chinese version; wording may keep evolving as the bilingual series is refined.
+
+Previous: [From Signaling Relay to SFU: When the Go Server Becomes a WebRTC Endpoint](/en/blog/sfu-server-webrtc-endpoint-and-mutex)
