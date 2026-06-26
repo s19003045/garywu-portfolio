@@ -1,0 +1,127 @@
+---
+title: "How a Cluster Knows Who Is Alive: Heartbeats, context, and JWT"
+date: "2026-06-29"
+order: 11
+description: "The other half of the Phase 6 cluster: how SFU nodes register via Redis heartbeats, why liveness detection has no detection at all, Go's context/ctx.Done and select, and the type assertions inside JWT validation."
+tags: ["Go", "AI Agent", "WebRTC", "Redis", "context", "JWT"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+The [previous article](/en/blog/scaling-stateful-sfu-with-room-affinity) was about the Router "reading" Redis to route. This one switches to the other half: **how SFU nodes "write" into Redis** so the cluster knows they are alive and which rooms they hold. Along this thread I learned three Go concepts: `context`/`ctx.Done()`, `select` multi-way waiting, and the type assertions inside JWT validation.
+
+What struck me most here was a piece of "**code I could not find**" — I went looking for the logic that "decides whether a node is dead," and discovered there is none. The answer is elegant enough to deserve its own write-up.
+
+## how a node heartbeats itself into Redis
+
+After each SFU node starts, it runs a background loop that reports in to Redis every 5 seconds (`sfu/cluster.go`):
+
+```go
+func (c *Cluster) heartbeat(ctx context.Context) {
+    names, peers, _ := c.sfu.snapshot()
+    payload, _ := json.Marshal(map[string]any{"addr": c.addr, "load": peers})
+    c.rdb.Set(ctx, "node:"+c.nodeID, payload, 15*time.Second) // register self, EX 15
+    pipe := c.rdb.Pipeline()
+    for _, name := range names {
+        pipe.Set(ctx, "room:"+name, c.nodeID, 60*time.Second)  // refresh occupied rooms, EX 60
+    }
+    pipe.Exec(ctx)
+}
+```
+
+Notice each `Set` carries a TTL (`EX`): `node:{id}` is 15 seconds, `room:{id}` is 60. An empty room has nobody and is not refreshed, so its TTL lapses and it disappears on its own — an important setup.
+
+## liveness detection has no detection
+
+At one point I went looking for the code where "the Router decides whether a node is dead," and searched all of `router/main.go` in vain. Then I realized: **there is no such logic**. Look at how the Router lists alive nodes:
+
+```go
+func (rt *Router) aliveNodes(ctx context.Context) ([]nodeInfo, error) {
+    iter := rt.rdb.Scan(ctx, 0, "node:*", 100).Iterator() // list only node:* keys that still exist
+    for iter.Next(ctx) { ... }
+}
+```
+
+It merely "scans the `node:*` keys that **still exist** in Redis." A dead node's key has already been auto-deleted by Redis on TTL expiry, so it naturally never shows up in the results. Therefore:
+
+> **Liveness is outsourced to Redis's TTL**: the key exists = alive, the key expired and gone = dead. Nobody compares "last heartbeat timestamps," because `EX 15` already did it for you.
+
+This also explains why the TTL (15) must be larger than the refresh interval (5): leave fault-tolerance headroom; a node can miss about two heartbeats in a row and still not be misjudged dead. If it were exactly 5 seconds, any single slow Redis write would let the key expire first, and the Router would mistake an alive node for dead.
+
+And when a node truly crashes? It stops refreshing; Redis keeps counting `node:{id}`'s TTL down and auto-deletes it at zero. So within about 15 seconds of the last heartbeat, the dead node vanishes from the cluster's view and the Router stops routing to it. **"Doing nothing" itself expresses "I am dead"** — a very common lease/TTL heartbeat technique in distributed systems. Noticing "there should be a check here but I cannot find one" is really the starting point of understanding this design.
+
+## context and ctx.Done(): an exit path that (in this program) is never taken
+
+That heartbeat loop looks like this:
+
+```go
+func (c *Cluster) run(ctx context.Context) {
+    t := time.NewTicker(5 * time.Second)
+    defer t.Stop()
+    c.heartbeat(ctx)
+    for {
+        select {
+        case <-ctx.Done():   // external request to shut down
+            return
+        case <-t.C:          // every 5 seconds
+            c.heartbeat(ctx)
+        }
+    }
+}
+```
+
+Compared with Phase 5's `for range t.C` that could never break, this adds a `case <-ctx.Done()`. `ctx.Done()` returns a channel that closes when the context is cancelled, which makes this case ready and `run` `return`.
+
+But there is a twist I did not see at first: `main.go` starts it with `context.Background()` — the root context that **is never cancelled**. So in this program, the `case <-ctx.Done()` path **is effectively never taken**, and the loop lives until the process exits, just like Phase 5's ticker. So why is it there? **To be cleanly stoppable and testable**: a test can pass a `context.WithCancel`, and calling `cancel()` lets the background goroutine exit gracefully.
+
+I wrote a small program to contrast: a `WithCancel` context fires `Done()` the moment you `cancel()`; a `context.Background()`'s `Done()` never fires no matter how long you wait. That made "why that case is a no-op in production" concrete.
+
+As for `select`: it blocks until one of its cases is ready; here it waits for both "5 seconds elapsed" and "cancelled," and goes with whichever comes first. This is the same move as Phase 4's Hub waiting on multiple channels at once.
+
+## JWT validation and type assertions
+
+The last piece is security. The Router issues a JWT carrying a `room`, and the SFU node validates it at join time (`sfu/auth.go`):
+
+```go
+token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+    if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok { // type assertion ①
+        return nil, errors.New("unexpected signing method")
+    }
+    return []byte(secret), nil
+})
+claims, ok := token.Claims.(jwt.MapClaims)               // type assertion ②
+if !ok || !token.Valid { return errors.New("invalid token") }
+if r, _ := claims["room"].(string); r != room {          // type assertion ③
+    return errors.New("token room mismatch")
+}
+```
+
+This uses Go's **type assertion** (`x.(T)`) three times in a row — syntax I had not formally met before. Its job: a value's static type is an interface, but it actually holds some concrete type, and `x.(T)` **checks at runtime and extracts** that concrete type.
+
+Point one: **the comma-ok form does not panic**. I verified with a small program: `c := a.(Cat)` (single-value form) panics and crashes on a type mismatch; `c, ok := a.(Cat)` (two-value form) merely gives `ok=false`. So `if _, ok := ...; !ok { return err }` turns "an odd or malicious token" into a clean error return, instead of letting the node panic and die.
+
+Point two: **assertion ① is a security line**. It confirms the signing algorithm really is HMAC before returning the key. The famous JWT vulnerability is exactly this: if you accept whatever `alg` the token declares, an attacker can switch algorithms (the classic `alg: none`, or RS256↔HS256 confusion) to forge a token the verifier wrongly accepts. Blocking "not my expected algorithm" first is what keeps it safe.
+
+Point three: **verifying the signature is not enough; you must compare the room**. The Router's ticket carries a `room` claim, and the node verifies "the ticket's room == the room you are trying to join" (`first.Room`). Without this comparison, a ticket legitimately issued for room A could be replayed to join room B — someone authorized only for A could eavesdrop on B. The signature verifies "did we issue this," the room comparison verifies "was it issued for this room"; each covers half.
+
+## verifying against real output
+
+- `context`: a `WithCancel` fires `Done()` immediately on `cancel()`; `Background()`'s `Done()` never fires. This maps to "that ctx.Done case is a no-op in production."
+- type assertion: single-value `a.(Cat)` on a mismatch → panic; two-value `a.(Cat)` → just `ok=false`, safe. This maps to "why token validation uses comma-ok."
+
+## if you want to learn this way too
+
+When reading "cluster coordination plus security" code, these questions help the most:
+
+1. is this "liveness/timeout" decided by code, or expressed by whether data exists
+2. what makes this background loop exit, and will the context passed in ever actually be cancelled
+3. is this type assertion guarding against a panic, or blocking some attack
+4. which missing step would let a "legitimate ticket" be used for something unauthorized
+
+Pushing your questions to "how state is expressed, what drives the exit, who this check defends against" reveals a system's design intent far better than a line-by-line walkthrough.
+
+## English version note
+
+This English article mirrors the structure of the Chinese version; wording may keep evolving as the bilingual series is refined.
+
+Previous: [Scaling a Stateful SFU: Router, Room Affinity, and Redis](/en/blog/scaling-stateful-sfu-with-room-affinity)

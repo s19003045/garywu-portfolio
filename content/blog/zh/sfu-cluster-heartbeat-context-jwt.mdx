@@ -1,0 +1,137 @@
+---
+title: "叢集怎麼知道誰還活著：心跳、context 與 JWT"
+date: "2026-06-29"
+order: 11
+description: "Phase 6 叢集的另一半：SFU 節點怎麼用 Redis 心跳註冊、為什麼存活判斷其實沒有判斷、Go 的 context/ctx.Done 與 select，以及 JWT 驗證裡的 type assertion。"
+tags: ["Go", "AI Agent", "WebRTC", "Redis", "context", "JWT"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+[上一篇](/zh/blog/scaling-stateful-sfu-with-room-affinity)看的是 Router「讀」Redis 來路由。這篇換到另一半：**SFU 節點怎麼「寫」進 Redis**，讓叢集知道它還活著、它手上有哪些房間。順著這條線，我學到三個 Go 概念：`context`/`ctx.Done()`、`select` 多路等待，還有 JWT 驗證裡的 type assertion。
+
+這篇對我衝擊最大的，是一個「**找不到的程式碼**」——我去找「判斷節點是否活著」的邏輯，結果發現根本沒有那段。答案漂亮到值得單獨寫一篇。
+
+## 節點怎麼把自己心跳進 Redis
+
+每個 SFU 節點啟動後，會跑一個背景迴圈，每 5 秒對 Redis 報一次平安（`sfu/cluster.go`）：
+
+```go
+func (c *Cluster) heartbeat(ctx context.Context) {
+    names, peers, _ := c.sfu.snapshot()
+    payload, _ := json.Marshal(map[string]any{"addr": c.addr, "load": peers})
+    c.rdb.Set(ctx, "node:"+c.nodeID, payload, 15*time.Second) // 註冊自己，EX 15
+    pipe := c.rdb.Pipeline()
+    for _, name := range names {
+        pipe.Set(ctx, "room:"+name, c.nodeID, 60*time.Second)  // 刷新有人的房間，EX 60
+    }
+    pipe.Exec(ctx)
+}
+```
+
+注意每個 `Set` 都帶了 TTL（`EX`）：`node:{id}` 是 15 秒、`room:{id}` 是 60 秒。空房間因為沒人、不會被刷新，TTL 到了就自動消失——這是個重要伏筆。
+
+## 存活判斷，其實沒有判斷
+
+我一度想找「Router 怎麼判斷某節點是不是死了」的程式碼，翻遍 `router/main.go` 都找不到。後來才意識到：**根本沒有那段邏輯**。看 Router 怎麼列出活節點：
+
+```go
+func (rt *Router) aliveNodes(ctx context.Context) ([]nodeInfo, error) {
+    iter := rt.rdb.Scan(ctx, 0, "node:*", 100).Iterator() // 只列出「還存在」的 node:* key
+    for iter.Next(ctx) { ... }
+}
+```
+
+它只是「掃出 Redis 裡**還存在**的 `node:*`」。死掉的節點，它的 key 早就被 Redis 因 TTL 過期刪掉了，自然不會出現在結果裡。所以：
+
+> **存活判斷被外包給 Redis 的 TTL**：key 還在 = 活著，key 過期消失 = 死了。沒有人去比對「上次心跳時間戳」，因為 `EX 15` 已經幫你做完了。
+
+這也解釋了為什麼 TTL（15）要設得比刷新間隔（5）大：留容錯空間，節點可以連續漏掉約兩次心跳都還不會被誤判死亡。如果設成剛好 5 秒，任何一次 Redis 寫入慢一點，key 就先過期，Router 會把活節點誤判成死的。
+
+而節點真的 crash 時呢？它停止刷新，`node:{id}` 的 TTL 由 Redis 自己持續倒數、歸零就自動刪除。所以從最後一次心跳算起約 15 秒內，這個死節點就從叢集視野裡消失，Router 不會再把人導過去。**「不做事」本身就表達了「我死了」**——這是分散式系統很常見的 lease／TTL 心跳手法。能注意到「這裡應該有判斷卻找不到」，其實就是讀懂這個設計的起點。
+
+## context 與 ctx.Done()：一條（在這支程式裡）永遠不會走的退場路
+
+那個心跳迴圈長這樣：
+
+```go
+func (c *Cluster) run(ctx context.Context) {
+    t := time.NewTicker(5 * time.Second)
+    defer t.Stop()
+    c.heartbeat(ctx)
+    for {
+        select {
+        case <-ctx.Done():   // 外部要求收工
+            return
+        case <-t.C:          // 每 5 秒一次
+            c.heartbeat(ctx)
+        }
+    }
+}
+```
+
+比起 Phase 5 那個無法跳出的 `for range t.C`，這裡多了一個 `case <-ctx.Done()`。`ctx.Done()` 回傳一個 channel，當這個 context 被取消時，channel 會關閉、這個 case 就成立、`run` 就 `return`。
+
+但這裡有個我一開始沒看到的轉折：`main.go` 啟動它時傳的是 `context.Background()`——**根 context，永遠不會被取消**。所以在這支程式裡，`case <-ctx.Done()` 這條路**實際上永遠不會成立**，這個迴圈跟 Phase 5 的 ticker 一樣活到程序結束。那它寫來幹嘛？**為了能被乾淨地關掉與測試**：測試可以傳一個 `context.WithCancel` 進來，呼叫 `cancel()` 就能讓這個背景 goroutine 優雅退場。
+
+我寫了個小程式對照：`WithCancel` 的 context 一 `cancel()`，`Done()` 馬上觸發；而 `context.Background()` 的 `Done()` 等多久都不會動。這讓「為什麼那條 case 在 production 形同虛設」變得很具體。
+
+至於 `select`：它會卡住，直到其中一個 case 就緒；這裡同時等「5 秒到」和「被取消」，誰先到走誰。這跟 Phase 4 的 Hub 同時等多個 channel 是同一招。
+
+## JWT 驗證與 type assertion
+
+最後一塊是安全。Router 簽發夾帶 `room` 的 JWT，SFU 節點在 join 時驗章（`sfu/auth.go`）：
+
+```go
+token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+    if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok { // type assertion ①
+        return nil, errors.New("unexpected signing method")
+    }
+    return []byte(secret), nil
+})
+claims, ok := token.Claims.(jwt.MapClaims)               // type assertion ②
+if !ok || !token.Valid { return errors.New("invalid token") }
+if r, _ := claims["room"].(string); r != room {          // type assertion ③
+    return errors.New("token room mismatch")
+}
+```
+
+這段一連用了三次 Go 的 **type assertion**（`x.(T)`），這是我之前沒正式碰過的語法。它的作用是：某個值的靜態型別是介面，但實際裝的是某個具體型別，`x.(T)` 在**執行期檢查並取出**那個具體型別。
+
+重點一：**comma-ok 形式不會 panic**。我寫了個小程式驗證：`c := a.(Cat)`（單值形式）型別不符會直接 panic 崩潰；`c, ok := a.(Cat)`（兩值形式）不符只給 `ok=false`。所以 `if _, ok := ...; !ok { return err }` 是把「遇到奇怪／惡意的 token」變成乾淨地回傳錯誤，而不是讓節點 panic 掛掉。
+
+重點二：**斷言 ① 是一道安全防線**。它確認簽章演算法真的是 HMAC，才回傳金鑰。著名的 JWT 漏洞就是：如果照單全收 token 宣告的 `alg`，攻擊者可以換演算法（經典的 `alg: none`，或 RS256↔HS256 混淆）來偽造一張驗證端會誤收的 token。先擋掉「不是我預期演算法」的 token，才安全。
+
+重點三：**光驗簽章還不夠，要比對 room**。Router 簽的票夾帶 `room` claim，而節點驗的是「票上的 room == 你這次想加入的房間」（`first.Room`）。如果少了這道比對，一張為房間 A 合法簽發的票，就能被拿去加入房間 B——一個只被授權進 A 的人可以偷看 B 的會議。簽章驗「是不是我們發的」，room 比對驗「是不是發給這個房間的」，兩個各管一半。
+
+## 回到執行結果驗證
+
+- `context`：`WithCancel` 一 `cancel()` → `Done()` 立刻觸發；`Background()` 的 `Done()` 永不觸發。對應「那條 ctx.Done case 在 production 形同虛設」。
+- type assertion：單值 `a.(Cat)` 型別不符 → panic；兩值 `a.(Cat)` → 只給 `ok=false`，安全。對應「為什麼驗 token 要用 comma-ok」。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+讀「叢集協調 + 安全」這種程式時，這幾個問題最有用：
+
+1. 這個「存活／逾時」是用程式判斷，還是用資料的存在與否表達
+2. 這個背景迴圈靠什麼退場，傳進來的 context 真的會被取消嗎
+3. 這個 type assertion 是在防 panic，還是在擋某種攻擊
+4. 這道驗證少了哪一步，會讓「合法的票」被拿去做沒授權的事
+
+把問題問到「狀態怎麼表達、退場靠什麼、這道檢查防的是誰」的層次，比逐行解釋更能看懂一個系統的設計意圖。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+8. [從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)
+9. [SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法](/zh/blog/sfu-track-forwarding-and-renegotiation)
+10. [水平擴展有狀態的 SFU：Router、房間親和性與 Redis](/zh/blog/scaling-stateful-sfu-with-room-affinity)
+11. **叢集怎麼知道誰還活著：心跳、context 與 JWT**
+
+上一篇：[水平擴展有狀態的 SFU：Router、房間親和性與 Redis](/zh/blog/scaling-stateful-sfu-with-room-affinity)

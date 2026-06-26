@@ -1,0 +1,124 @@
+---
+title: "Scaling a Stateful SFU: Router, Room Affinity, and Redis"
+date: "2026-06-28"
+order: 10
+description: "Phase 6 turns a single-node SFU into a multi-node cluster. Using the Router's routing logic, this article covers how to horizontally scale a stateful service, Go's method values and sort.Slice, and why the Router only points the way and never carries media."
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Redis", "Distributed Systems"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+In the [previous articles](/en/blog/sfu-server-webrtc-endpoint-and-mutex) I got through the single-node SFU in Phase 5. Phase 6 has a completely different flavor: it is not about "writing one server correctly," but about "**turning a stateful server into a horizontally scalable cluster**," aiming for thousands of users and many meeting spaces.
+
+If you are not familiar with this project yet, start with the [primer](/en/blog/webrtc-poc-go-series-primer).
+
+The most important thing I learned here is not a particular Go syntax, but a system design idea: **a stateful service cannot spray its traffic around the way a stateless one can**. Along the way I also picked up two very practical Go concepts — method values and `sort.Slice`.
+
+## a stateful service cannot just be spread around
+
+Stateless services (a typical API) are easy to scale: run ten identical machines, put a load balancer in front, and distribute freely, because any machine can handle any request.
+
+An SFU is not like that. **A room's media is actually bound to a specific node** — everyone uploads to that node and it forwards. You cannot spread the people in one room across different nodes, or they simply will not receive one another.
+
+So Phase 6's scaling strategy is not "make the single node bigger," but **room affinity routing**:
+
+> People in the same room always go to the same node; many rooms spread across many nodes.
+
+As long as a single room has a cap, the number of rooms scales out indefinitely by adding nodes. That mental shift is the foundation of all of Phase 6. It also brings two things Phase 5 did not have: a new process, the **Router**, and a new state holder, **Redis**.
+
+## a new front desk: the Router
+
+The Router (`router/main.go`) is the cluster's "matchmaking" layer. Before joining a meeting, the browser asks it "which node should my room connect to":
+
+```go
+func (rt *Router) handleRoute(w http.ResponseWriter, r *http.Request) {
+    room := r.URL.Query().Get("room")
+    node, _ := rt.pickNode(r.Context(), room) // decide which node
+    token, _ := rt.issueToken(room)           // sign a join JWT
+    json.NewEncoder(w).Encode(map[string]any{
+        "url":   node.Addr,   // the SFU node to connect to
+        "token": token,
+    })
+}
+```
+
+The key design: **the Router only returns "which node to connect to"; the browser then connects directly to that SFU node for signaling and media. Audio and video never pass through the Router.**
+
+At first I wondered "why not just let the Router forward everything." Then it clicked: if media flowed through the Router, the whole cluster's capacity would be capped by that one box — adding nodes would be pointless; and if the Router died, every call would die with it (a single point of failure). The Router can serve thousands of nodes precisely because it only does one short lookup, not long-lived connections.
+
+## a Go detail: method values
+
+Registering this handler, I noticed a difference from Phase 5:
+
+```go
+mux.HandleFunc("/api/route", rt.handleRoute) // Phase 6: pass a method
+mux.HandleFunc("/ws", func(w, r){ ... })     // Phase 5: pass an anonymous func
+```
+
+`rt.handleRoute` has **no parentheses** after it. At first I thought this was just "declared elsewhere vs declared inline," but the real point is: no parentheses means **you are not calling it, you are passing it as a "function value."** Writing `rt.handleRoute()` (with parentheses) would call it immediately — a completely different meaning.
+
+More precisely, `rt.handleRoute` is a **method value**: it quietly binds the receiver `rt` into that function value. So when `HandleFunc` later actually calls it, it can still reach `rt.rdb` and `rt.jwtSecret`. I wrote a small program to verify: store a method value in a variable, call it later, and it still remembers its `rt`; even after I changed a field on `rt` mid-way, it saw the new value (because it binds the pointer). Both styles are fundamentally the same thing — handing a `func(w, r)` value to `HandleFunc`.
+
+## pickNode: how "same room, same node" is guaranteed
+
+The Router's brain is `pickNode`. "Same room, same node" relies on a query to Redis:
+
+```go
+// existing assignment: room:X was assigned to a node, and that node is still alive → reuse + renew
+if id, err := rt.rdb.Get(ctx, "room:"+room).Result(); err == nil {
+    if n, ok := alive[id]; ok {
+        rt.rdb.Expire(ctx, "room:"+room, 60*time.Second)
+        return n, nil
+    }
+}
+```
+
+I first assumed that as long as `Get` returns an id, it reuses it. But there are **two guards** here: (a) does `room:X` still exist in Redis, and (b) is the node behind `alive[id]` still alive. Both must hold to reuse.
+
+Why is (b) needed? Because node liveness (`node:*`) and room ownership (`room:*`) are **two keys with different TTLs** in Redis. If a node dies, its `node:*` expires and disappears first, but `room:X` may still be around — at which point `Get` still returns that dead node's id, and it is (b)'s `alive[id]` that blocks it, letting the code fall through to **reassign to a node that is still alive**. That is the "self-healing" the README mentions: a dead node's rooms get reassigned automatically. I had assumed "a dead node would still reuse the old record" — exactly backwards.
+
+## the cold-start "everyone piles on one node" trap
+
+When picking a node for a new room (or one whose node died), the instinct is "pick the lowest load." But there is a trap:
+
+```go
+sort.Slice(nodes, func(i, j int) bool {
+    if nodes[i].Load != nodes[j].Load {
+        return nodes[i].Load < nodes[j].Load   // lower load comes first
+    }
+    return affinity(room, nodes[i].ID) < affinity(room, nodes[j].ID) // tie-break by hash
+})
+pick := nodes[0]
+```
+
+When the cluster just starts, every node's load is 0. With "lowest load" alone, all are equal, the sort result is fixed, and so **every new room picks the same first-place node** (load only refreshes every 5 seconds, so it stays 0 for a while). `affinity(room, node) = hash(room+node)` fixes this: it produces a different ordering per room — room A might favor node-1, room B node-2 — so even with equal load, rooms spread out. Hashing by room makes the spread stable and reproducible.
+
+This also corrected a misunderstanding I had about `sort.Slice`. The less function you pass in **returns `true` to mean "`i` should come before `j`"** (not "no need to move"). So `Load < Load` sorts the lowest load to index 0, exactly what `nodes[0]` wants.
+
+## verifying against real output
+
+I ran both Go concepts in minimal programs rather than just taking them on faith:
+
+- method value: `f := rt.handle` (no parens) takes the value without calling; calling `f()` later still remembers `rt`; after changing a field on `rt` it sees the new value — confirming it binds the pointer.
+- `sort.Slice`: `return s[i] < s[j]` produces ascending order with the smallest at index 0 — confirming "less returning true = i comes first."
+
+Mapping abstract syntax onto a program that prints a specific order is far more reliable than memorizing definitions.
+
+## if you want to learn this way too
+
+When reading "scale a stateful service" problems, these questions help the most:
+
+1. where is this service's state bound, and can it be spread freely
+2. does this front-end component touch the real data flow, and why
+3. which conditions must all hold for this reuse/reassign decision
+4. how does this sort/selection break ties, and why is it designed that way
+
+Pushing your questions to "where the state lives, who touches the data flow, what the decision depends on" reveals a distributed design far better than a line-by-line walkthrough.
+
+## English version note
+
+This English article mirrors the structure of the Chinese version; wording may keep evolving as the bilingual series is refined.
+
+Previous: [The Heart of an SFU: Track Forwarding, Renegotiation, and the "Sixth Person" Bug](/en/blog/sfu-track-forwarding-and-renegotiation)
+
+Next: [How a Cluster Knows Who Is Alive: Heartbeats, context, and JWT](/en/blog/sfu-cluster-heartbeat-context-jwt)

@@ -1,0 +1,134 @@
+---
+title: "水平擴展有狀態的 SFU：Router、房間親和性與 Redis"
+date: "2026-06-28"
+order: 10
+description: "Phase 6 把單節點 SFU 變成多節點叢集。這篇用 Router 的路由邏輯，學『有狀態服務怎麼水平擴展』、Go 的 method value 與 sort.Slice，以及為什麼 Router 只牽線、不碰媒體。"
+tags: ["Go", "AI Agent", "WebRTC", "SFU", "Redis", "分散式系統"]
+category: "go-notes"
+series: "go-with-ai-agent"
+---
+
+[前兩篇](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)我在 Phase 5 把單節點 SFU 讀懂了。Phase 6 的題目完全換了味道：不是「把一個 server 寫對」，而是「**把一個有狀態的 server 變成可水平擴展的叢集**」，目標是數千人、多會議空間。
+
+如果你還不熟這個專案，建議先看[前導文](/zh/blog/webrtc-poc-go-series-primer)。
+
+這篇我學到的最重要一件事，其實不是某個 Go 語法，而是一個系統設計觀念：**有狀態的服務，不能像無狀態服務那樣隨意把流量打散**。但過程中也順手撿到兩個很實用的 Go 概念——method value 和 `sort.Slice`。
+
+## 有狀態的服務，不能隨意打散
+
+無狀態服務（像一般 API）要擴展很簡單：開十台一模一樣的機器，前面放個負載平衡器隨便分就好，因為每台都能處理任何請求。
+
+但 SFU 不是這樣。**一個房間的媒體，實際綁在某一個節點上**——大家把影像上傳到那個節點，再由它轉發。你不能把同一個房間的人分散到不同節點，否則他們根本收不到彼此。
+
+所以 Phase 6 的擴展策略不是「把單節點放大」，而是**房間親和性路由**：
+
+> 同一個房間的人，永遠導到同一個節點；很多房間，分散到很多節點。
+
+只要單房人數有上限，房間數就能靠加節點無限擴展。這個轉念是整個 Phase 6 的地基。它也帶來兩個 Phase 5 沒有的東西：一個新程序 **Router**，和一個新的狀態持有者 **Redis**。
+
+## 多了一個前台：Router
+
+Router（`router/main.go`）是叢集的「牽線層」。瀏覽器加入會議前，先問它一句「我這個房間該連哪個節點」：
+
+```go
+func (rt *Router) handleRoute(w http.ResponseWriter, r *http.Request) {
+    room := r.URL.Query().Get("room")
+    node, _ := rt.pickNode(r.Context(), room) // 決定哪個節點
+    token, _ := rt.issueToken(room)           // 簽一張入會 JWT
+    json.NewEncoder(w).Encode(map[string]any{
+        "url":   node.Addr,   // 該連的 SFU 節點位址
+        "token": token,
+    })
+}
+```
+
+最關鍵的設計：**Router 只回「該連哪個節點」，瀏覽器拿到位址後直接連那個 SFU 節點傳信令和媒體。音訊、視訊完全不經過 Router。**
+
+我一開始會想「為什麼不讓 Router 統一轉發就好」。後來想通了：如果媒體全流經 Router，那整個叢集的容量就被這一台卡死——加再多節點也沒用；而且 Router 一掛，全部通話跟著掛（單點故障）。Router 之所以能服務上千個節點，正是因為它只做一次很短的查詢，不扛長連線。
+
+## 一個 Go 細節：method value
+
+註冊這個 handler 時，我注意到一個和 Phase 5 不同的寫法：
+
+```go
+mux.HandleFunc("/api/route", rt.handleRoute) // Phase 6：傳一個 method
+mux.HandleFunc("/ws", func(w, r){ ... })     // Phase 5：傳一個匿名函式
+```
+
+`rt.handleRoute` 後面**沒有括號**。一開始我以為這只是「在別處宣告 vs 內聯宣告」的差別，但其實重點是：沒有括號代表**不是在呼叫它，而是把它當成一個「函式值」傳進去**。如果寫成 `rt.handleRoute()`（有括號）會立刻呼叫它，那是完全不同的意思。
+
+更精準地說，`rt.handleRoute` 是一個 **method value**：它會把接收者 `rt` 偷偷綁進那個函式值。所以之後 `HandleFunc` 真正呼叫它時，它仍然能存取 `rt.rdb`、`rt.jwtSecret`。我寫了個小程式驗證：把 method value 存進變數、晚點再呼叫，它依然記得自己的 `rt`；甚至中途改了 `rt` 的欄位，它也看得到（因為綁的是指標）。兩種寫法本質是同一件事——都是把一個 `func(w, r)` 值交給 `HandleFunc`。
+
+## pickNode：同房永遠同節點是怎麼保證的
+
+Router 的大腦是 `pickNode`。「同房同節點」靠的是一段對 Redis 的查詢：
+
+```go
+// 既有指派：room:X 之前被指到某節點，且那節點還活著 → 沿用 + 續命
+if id, err := rt.rdb.Get(ctx, "room:"+room).Result(); err == nil {
+    if n, ok := alive[id]; ok {
+        rt.rdb.Expire(ctx, "room:"+room, 60*time.Second)
+        return n, nil
+    }
+}
+```
+
+我一開始以為只要 `Get` 拿得到 id 就沿用。但這裡有**兩道守衛**：(a) `room:X` 在 Redis 裡還在嗎、(b) `alive[id]` 那個節點還活著嗎。兩個都成立才沿用。
+
+為什麼需要 (b)？因為節點存活（`node:*`）和房間歸屬（`room:*`）在 Redis 裡是**兩個 TTL 不同的 key**。萬一某節點掛了，它的 `node:*` 會先過期消失，但 `room:X` 可能還在——這時 `Get` 仍會回傳那個死節點的 id，是 (b) 的 `alive[id]` 把它擋下來，讓程式往下走、**改派到一個還活著的節點**。這就是 README 說的「自我修復」：死節點的房間會自動被改派。我原本以為「節點死了還是會沿用舊紀錄」，剛好相反。
+
+## 冷啟動全擠一個節點的坑
+
+新房間（或原節點已死）要挑節點時，直覺是「挑負載最低的」。但有個坑：
+
+```go
+sort.Slice(nodes, func(i, j int) bool {
+    if nodes[i].Load != nodes[j].Load {
+        return nodes[i].Load < nodes[j].Load   // 負載小的排前面
+    }
+    return affinity(room, nodes[i].ID) < affinity(room, nodes[j].ID) // 平手用 hash 分散
+})
+pick := nodes[0]
+```
+
+叢集剛開時，每個節點負載都是 0。如果只用「負載最低」，大家相等，排序結果固定，於是**每個新房間都選到同一個排第一的節點**（負載每 5 秒才更新，短時間內它一直是 0）。`affinity(room, node) = hash(room+node)` 解掉這個：它對不同房間算出不同的排序，房間 A 可能 node-1 勝、房間 B 可能 node-2 勝，於是負載相等時房間也會被分散開。用 room 來 hash，是為了穩定、可重現地分。
+
+這裡也修正了我對 `sort.Slice` 的一個誤解。傳進去的 less 函式，**回傳 `true` 代表「`i` 應該排在 `j` 前面」**（不是「不用移動」）。所以 `Load < Load` 排出來負載最小的在 index 0，剛好是 `nodes[0]` 要的。
+
+## 回到執行結果驗證
+
+這篇的兩個 Go 概念，我都用最小程式跑過、不是只聽說：
+
+- method value：`f := rt.handle`（無括號）先取值不呼叫，晚點 `f()` 仍記得 `rt`；改了 `rt` 欄位後再呼叫看得到新值——確認它綁的是指標。
+- `sort.Slice`：`return s[i] < s[j]` 跑出來是升冪、最小的在 index 0，確認「less 回傳 true = i 排前面」。
+
+把抽象語法對回一段會印出特定順序的程式，比背定義可靠太多。
+
+## 如果你也想這樣學，可以怎麼問 AI
+
+讀「擴展一個有狀態服務」這種題目時，這幾個問題最有用：
+
+1. 這個服務的狀態綁在哪裡，能不能隨意打散
+2. 這個前台元件碰不碰真正的資料流，為什麼
+3. 這個沿用/改派的判斷，靠哪幾個條件同時成立
+4. 這段排序/挑選邏輯，平手時怎麼決定，為什麼要這樣設計
+
+把問題問到「狀態住哪、誰碰資料流、判斷靠什麼」的層次，比逐行解釋更能看懂一個分散式設計。
+
+## 系列文章
+
+1. [我怎麼把 AI agent 當成 Go 程式教練，而不是程式碼產生器](/zh/blog/ai-agent-go-coach-not-code-generator)
+2. [先讀懂專案，再讀懂語法：我如何從 WebRTC 專案開始學 Go](/zh/blog/learn-go-from-real-project-entrypoint)
+3. [goroutine、channel、Hub：第一次看懂 Go 併發到底在做什麼](/zh/blog/goroutine-channel-hub-go-concurrency)
+4. [WebSocket 生命週期：readPump、writePump 與斷線清理怎麼串起來](/zh/blog/websocket-readpump-writepump-lifecycle)
+5. [signaling 事件流：join、signal、leave 怎麼在 Go server 裡流動](/zh/blog/signaling-event-flow-join-signal-leave)
+6. [最小化除錯：我怎麼靠 log 讀懂 Go 服務的行為](/zh/blog/minimal-debugging-go-with-logs)
+7. [在 AI agent 時代，怎麼更主動地學一門新程式語言](/zh/blog/active-learning-new-language-with-ai-agent)
+8. [從信令轉發到 SFU：當 Go 伺服器自己變成 WebRTC 的一端](/zh/blog/sfu-server-webrtc-endpoint-and-mutex)
+9. [SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法](/zh/blog/sfu-track-forwarding-and-renegotiation)
+10. **水平擴展有狀態的 SFU：Router、房間親和性與 Redis**
+11. [叢集怎麼知道誰還活著：心跳、context 與 JWT](/zh/blog/sfu-cluster-heartbeat-context-jwt)
+
+上一篇：[SFU 的心臟：track 轉發、重新協商與「第 6 人只看到自己」的修法](/zh/blog/sfu-track-forwarding-and-renegotiation)
+
+下一篇：[叢集怎麼知道誰還活著：心跳、context 與 JWT](/zh/blog/sfu-cluster-heartbeat-context-jwt)
