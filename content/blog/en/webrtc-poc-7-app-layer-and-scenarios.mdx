@@ -1,0 +1,97 @@
+---
+title: "Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything"
+date: "2026-07-02"
+description: "The media layer is only the foundation. What really defines the product is the application layer — accounts, meetings, permissions, links. This article covers the layer you must build yourself regardless of the media choice, and uses three scenarios to show how context reshapes the non-media requirements."
+tags: ["WebRTC", "System Architecture", "Authentication", "Access Control", "Product Design"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+The [previous article](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt) finished the media-layer decision. But if you think "once LiveKit is chosen, we are basically done," you would be very wrong.
+
+The media layer is only the foundation. **Almost all of the product value users actually feel lives in the application layer**: how you log in, how you create a meeting, who can join, how links are shared, how scheduling works. This layer — whether you self-build or adopt the media layer — **you have to build yourself**, because it is your product.
+
+## regardless of the media choice, you build this layer yourself
+
+Lay out the features we wanted from the start, and they all land in the application layer, almost unrelated to the media layer:
+
+- **Identity and accounts**: Google login (OIDC) → create your own user and session.
+- **Meetings as first-class entities**: store meetings in a database (e.g. Postgres) — id, code, host, passcode, expiry, settings. "Share a link" = share a meeting code; "create a link" = open a meeting record.
+- **Pre-create / scheduling**: add a scheduled time, recurrence, and calendar integration to the same meeting table; a link can be created ahead and only become joinable at its time.
+- **Permissions and roles**: host / co-host / participant / viewer; a lobby, lock room, kick, force-mute.
+
+And all of this grows naturally on top of what you already have in Phase 6: **the join token evolves from "room-level" to "identity + room + role + capability" level.** Phase 6's SFU already validates the `room` in the token; it extends naturally to validating `role` and permissions. The media layer (LiveKit or self-built) only decides "admit or not, may publish or not" — **what decides the permissions is your application layer.**
+
+## the architecture beyond the media layer
+
+```
+ Google ──OIDC──▶ ┌───────────────┐  meetings/users/perms ┌──────────┐
+ user   ◀─session─│  Auth/API svc │◀──────────────────────│ Postgres │
+        │ w/ token │ create meeting│                       └──────────┘
+        ▼         │ schedule, sign │  token + node address
+   media layer (LiveKit or self-built SFU cluster) ── recording/egress → object storage / CDN
+```
+
+The new protagonists are the **Auth/API service** (login, manage meetings and permissions, sign media tokens) and the **database** (the source of truth for meetings and permissions; Redis is only suited to expirable real-time state, not the meeting entity itself). Note this layer is **completely decoupled from your media-layer choice** — which is exactly why it is the most worthwhile thing to invest in yourself.
+
+## how scenarios reshape this layer
+
+Even within the "application layer," the three scenarios want very different things:
+
+**Open large-scale (Meet-like)**
+- Identity: Google / social login, low friction.
+- Links: anyone can create a room, share by code, guests can join.
+- Focus: consumer-grade UX, **abuse prevention** (rate limiting, anti-spam, anti-harassment), reporting mechanisms.
+
+**Security-strict enterprise**
+- Identity: **enterprise SSO (their own IdP, usually not Google)**, tied to the company directory.
+- Security: **E2EE, data residency / on-prem, full audit logs, device control**; recording may be outright banned or strictly governed.
+- Links: not public, internal only, possibly requiring re-authentication to enter.
+
+**10k concert**
+- Identity: **ticket validation** (only ticket holders can watch), not traditional accounts.
+- Scale: hundreds of thousands of viewers; the focus is **CDN cost** and concurrency.
+- Features: DVR / replay, and chat/interaction that can withstand a massive audience (usually on a separate messaging system).
+
+## one table to wrap up the three scenarios
+
+| Dimension | Open large-scale (Meet) | Security-strict enterprise | 10k concert |
+|---|---|---|---|
+| Shape of scale | Many small/medium rooms (A) | Small/medium, highly sensitive | Single huge room (B) |
+| Media layer | Adopt LiveKit | LiveKit on-prem + TURN | Broadcast LL-HLS/CDN |
+| Identity | Google login | Enterprise SSO | Ticket validation |
+| Compliance | Standard | E2EE / on-prem / audit | Licensing / ticketing |
+| Biggest cost | Node scale | Compliance and ops | CDN traffic |
+| Link semantics | Public, easy to share | Internal, controlled | Ticket = right to enter |
+
+The same words "video system" actually hide three different products.
+
+## what this whole series wants to say
+
+Looking back across Phase 1 to Phase 6, and then these three decision articles, my biggest takeaway is not "I learned SFU" or "I learned LiveKit," but a higher-level judgment:
+
+**From POC to product, what matters most is not mastering one technology to the extreme, but first clarifying the goal and context, then letting the goal pick the technology.**
+
+Self-building up to Phase 6 gave me the ability to see what each option solves; laying out the three scenarios showed me how the same knowledge derives three different architectures. Technology is the means, the goal is the direction — that is probably the one sentence this whole series, from "turning on the camera" all the way to "how to choose," most wants to leave behind.
+
+## glossary
+
+- **OIDC**: OpenID Connect, an identity layer on top of OAuth2; Google login is one example.
+- **SSO**: single sign-on, where enterprises use their own identity provider (IdP) for unified login.
+- **E2EE**: end-to-end encryption, where even the server cannot see the media content.
+- **IdP**: Identity Provider (e.g. a corporate directory, or Google).
+- **DVR**: the ability to rewind/time-shift during a livestream.
+
+## WebRTC POC series
+
+This is Part 7 of the series, and the last of the "POC to product" decision trilogy.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. **Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything**
+
+Previous: [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)

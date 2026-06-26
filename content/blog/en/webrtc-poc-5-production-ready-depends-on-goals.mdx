@@ -1,0 +1,104 @@
+---
+title: "There Is No Single Production-Ready: Deriving Strategy From Your Goals"
+date: "2026-06-30"
+description: "After Phase 6, there is still a gap between the POC and a real large-scale video product — and that gap depends on your goals. Using three very different scenarios, this article is about deriving architecture strategy from goals, instead of starting from the tech you happen to know."
+tags: ["WebRTC", "System Architecture", "Technology Selection", "SFU", "LiveKit"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+After finishing the multi-node SFU cluster in Phase 6, a harder question surfaced for me:
+
+**Is this "ready to ship"?**
+
+Honestly, the answer is "it depends." And that "it depends" is not a dodge — it is the nature of this kind of system. What I want to record here is not how to build a particular piece of tech, but a judgment I think matters more: **the distance from POC to product depends on your goals; different goals lead to completely different architectures.**
+
+If you have not seen how this project went from 1:1 to a multi-node SFU, start with the [previous article](/en/blog/webrtc-poc-4-sfu-scale).
+
+## "Is it done" is the wrong question
+
+It is easy to imagine "production-ready" as a fixed checklist: tick every box, then ship.
+
+But video systems do not work that way. A system "for 5-person small-group teaching" and a system "for a 10,000-person concert livestream" share almost no architecture. Applying the first one's checklist to the second is simply wrong.
+
+So the right question is not "is it done," but:
+
+**For whom, in what scenario, at what scale, under what constraints — and therefore, how far do I actually need to go.**
+
+Only after answering that does the technology choice have a basis. Otherwise it easily becomes "I know SFU, so let's use SFU for everything" — the classic "when you have a hammer, everything looks like a nail."
+
+## three scenarios I use to interrogate myself
+
+To make "it depends" concrete, I picked three very different scenarios that the next two articles will keep comparing:
+
+1. **An open large-scale video system (like Google Meet)**: many people, many rooms, a per-room cap, everyone turning on their camera and interacting.
+2. **A security-strict multinational enterprise (so strict that personal devices are banned from the office)**: not necessarily many users, but data must never leak, must comply with multiple countries' laws, and must be auditable.
+3. **A 10,000-person concert livestream**: a single "room" with tens of thousands of people, but the vast majority only watch; only a few on stage are sending.
+
+You will see these three pull every decision axis in a different direction.
+
+## the axes that actually decide the architecture
+
+I break "how far do I need to go" into a few axes I can answer one by one:
+
+- **The "shape" of scale**: is it "many small-to-medium rooms," or "a single enormous room"? This matters more than "how many people total."
+- **Interactive vs broadcast**: does everyone publish, or do a few publish while many watch? This decides the media model.
+- **Build vs adopt**: do you maintain the media layer yourself, or use LiveKit / SaaS? This is the trade-off between control, cost, and time-to-market.
+- **Data and compliance**: can data live in the public cloud? Do you need on-prem, end-to-end encryption, audit logs?
+- **Time-to-market vs long-term control**: fast first, or stable first? This loops back and influences every axis above.
+
+The point: these axes have **no universal best answer**; each one is decided by the scenario.
+
+## same axes, three different answers
+
+Run the three scenarios through these axes and the divergence appears immediately:
+
+| Axis | Open large-scale (Meet-like) | Security-strict enterprise | 10k concert |
+|---|---|---|---|
+| Shape of scale | Many small/medium rooms (A) | Small/medium rooms, highly sensitive | Single huge room (B) |
+| Interactive vs broadcast | Mostly interactive | Mostly interactive | Mostly broadcast |
+| Build vs adopt | Adopt (LiveKit/SaaS) | Self-host / on-prem (no public-cloud SaaS) | Broadcast pipeline + a little SFU |
+| Data and compliance | Standard | Highest: on-prem, E2EE, audit | Medium: licensing, ticketing |
+| Biggest cost | Node cost at scale | Compliance and operations | CDN traffic |
+
+Same team, same knowledge — change only the goal, and the best strategy changes entirely. That is exactly what I want these articles to make clear.
+
+## derive from goals, do not start from the tech
+
+The biggest takeaway from this is methodological:
+
+**Spell out the goals and constraints first, and let them pick the technology; do not fall in love with a technology first and then look for scenarios it fits.**
+
+Having self-built up to Phase 6, I felt a pull: since I already wrote an SFU cluster myself, surely I should self-build for production too. But once the goals are laid out, you see that for "Meet-like" and "enterprise," build-vs-adopt land on opposite answers; and "concert" should not put everyone into WebRTC at all.
+
+The value of self-building is not that you will "always self-build." It is that you can **see what problem each option solves**, so when a real choice arrives, you can judge instead of believe.
+
+## the next two articles
+
+This one sets up "how to think." The next two will run the three scenarios all the way through:
+
+- The next article is about the **media layer** decision: self-built SFU, adopting LiveKit, or a broadcast pipeline — and where each scenario lands.
+- The third is about **beyond the media layer**: the application layer (accounts, meetings, permissions, links) is the real product value, and how each scenario reshapes it.
+
+## glossary
+
+- **SFU**: Selective Forwarding Unit, a server that receives and forwards media (common for interactive multi-party video).
+- **Broadcast pipeline**: converting media into a stream like HLS/LL-HLS and letting a CDN distribute it to a huge audience.
+- **LiveKit**: an open-source SFU built on Pion, with built-in multi-node, simulcast, recording, and SDKs.
+- **E2EE**: end-to-end encryption, where even the server cannot see the media content.
+
+## WebRTC POC series
+
+This is Part 5 of the series. The first four went from 1:1 signaling all the way to SFU and multi-node operations; from here on, it is about the decisions between a POC and a real large-scale product.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. **There Is No Single Production-Ready: Deriving Strategy From Your Goals**
+6. [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)
+7. [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+
+Previous: [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+
+Next: [The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline](/en/blog/webrtc-poc-6-media-plane-build-vs-adopt)

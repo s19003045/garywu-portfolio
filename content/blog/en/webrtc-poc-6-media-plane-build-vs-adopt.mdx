@@ -1,0 +1,95 @@
+---
+title: "The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline"
+date: "2026-07-01"
+description: "The media layer is the most expensive and hardest-to-change layer of a video system. This article lays out three paths — self-built SFU, adopting LiveKit/SaaS, and a broadcast pipeline — and uses the Meet-like, enterprise, and 10k-concert scenarios to show how one decision has three answers."
+tags: ["WebRTC", "SFU", "LiveKit", "System Architecture", "HLS"]
+category: "webrtc-system"
+series: "webrtc-poc"
+---
+
+The [previous article](/en/blog/webrtc-poc-5-production-ready-depends-on-goals) set up a way of thinking — "derive strategy from goals" — and introduced three scenarios. This one focuses on the most expensive and hardest-to-reverse decision: **how to choose the media layer.**
+
+The media layer is "how the audio and video actually flow." Its choice drives cost, latency, scalability, and compliance, so it is worth thinking through on its own.
+
+## three paths, each solving a different problem
+
+The media layer has roughly three paths — not mutually exclusive, and often mixed:
+
+- **Self-built SFU**: maintain your own forwarding cluster in Go + Pion (or similar). Maximum control, maximum maintenance burden.
+- **Adopt a mature solution**: LiveKit (self-hosted or cloud), or SaaS like Daily / Agora / Twilio. Trade operations away for time-to-market.
+- **Broadcast pipeline**: convert media into HLS / LL-HLS and let a CDN distribute it. Trade a few seconds of latency for a near-unlimited audience.
+
+The key questions: **is your scenario "interactive" or "broadcast," and can the data live in someone else's cloud?** These two route you to different paths.
+
+## interactive: build vs adopt
+
+If everyone turns on the camera and interacts in real time (Meet-like, enterprise meetings), the media model is an SFU. The only question left is "maintain it yourself or use someone else's."
+
+Having self-built up to Phase 6, I know exactly what self-building has to carry long-term — all of which **frameworks handle for you**:
+
+- simulcast / SVC: send the same video in multiple qualities so the receiver picks a layer by network.
+- TURN cluster: a relay when plain STUN fails under strict NAT / corporate firewalls.
+- autoscaling + graceful drain: nodes scale with load, and going offline must not hard-cut live calls.
+- SFU cascading: huge rooms need multiple nodes relaying for one another.
+- fault tolerance, multi-region, bandwidth estimation, recording…
+
+None of these are small. So for an interactive product that "needs to be fast and low-maintenance," my leaning is clear: **adopt LiveKit (it is built on Pion, almost the same mental model as what I self-built), and save engineering effort for the application layer.**
+
+So was the self-building wasted? Not at all. Below is what it lets me take away.
+
+## broadcast: a 10k concert should not put everyone into WebRTC
+
+A 10,000-person concert livestream is a different world. Forcing all ten thousand viewers into WebRTC pushes a single room's total download toward O(N²), and any SFU will be crushed.
+
+But look closely: **only a few people on stage are actually "sending"; the other tens of thousands are only "watching."** So you should layer it:
+
+- A few publishers: come in via WebRTC / SFU (perhaps first mixed into a single program feed).
+- The huge audience: switch to **a stream like LL-HLS + CDN**. Viewers pull over HTTP, and the CDN's edge nodes scale horizontally to any size.
+
+The cost is latency going from "milliseconds" to "seconds." But for a watch-only concert, a few seconds is perfectly acceptable, and in return cost is decoupled from audience size — exactly what CDNs are good at.
+
+In other words, the right answer here is not "tune the SFU harder," but "**recognize that most people do not need interaction, and switch to a completely different pipeline.**"
+
+## where each scenario's media layer lands
+
+| Scenario | Media-layer choice | Why |
+|---|---|---|
+| Open large-scale (Meet-like) | **Adopt LiveKit** (cloud or self-hosted) | Interactive, needs speed, scales by spreading rooms; self-maintaining is not worth it |
+| Security-strict enterprise | **LiveKit self-hosted on-prem + self-run coturn** | Interactive, but **data cannot leave the company** → no public-cloud SaaS; strict firewalls need TURN |
+| 10k concert | **A little publisher-side SFU + broadcast LL-HLS/CDN** | Broadcast; trade latency for unlimited audience, with cost in CDN traffic |
+
+Note that "Meet-like" and "enterprise" share the same media model (both SFU), but because of the **compliance** axis, one can use the cloud and the other must be on-prem — exactly the "same axes, different answers" from the previous article.
+
+## what I take away from Phase 6
+
+Even if I end up adopting LiveKit, the self-building was not a detour. It lets me **understand and debug** a system that would otherwise be a black box:
+
+- I know "the server also participates in WebRTC negotiation," "how a track gets forwarded," "when renegotiation happens" — so when LiveKit misbehaves, I know where to look.
+- I understand "room tokens, room-affinity routing, per-peer quality metrics" — so I can read what LiveKit's configuration and monitoring are saying.
+- I know what simulcast, TURN, and cascading each solve — so I evaluate options without being led by marketing.
+
+**Adopting a solution whose principles you understand is a different kind of engineering capability than adopting one you can only copy from the docs.** That is where the value of self-building is cashed in.
+
+## glossary
+
+- **LL-HLS**: Low-Latency HLS, an HLS variant down to a few seconds of latency, suited to large-scale livestreaming.
+- **CDN**: Content Delivery Network, distributing streams via edge nodes everywhere so audience size is barely limited by any single machine.
+- **simulcast**: sending the same video in multiple qualities at once, so the receiver picks based on network conditions.
+- **TURN / coturn**: a media relay under strict NAT; coturn is a common open-source TURN server.
+- **cascading**: SFU nodes relaying for one another, used for a single huge room.
+
+## WebRTC POC series
+
+This is Part 6 of the series. Continuing the previous decision framework, this part focuses on the media layer's three paths and where the three scenarios land.
+
+1. [Starting from 1:1 WebRTC: The Hard Part of Video Systems Isn't Turning On the Camera](/en/blog/webrtc-poc-1-signaling-presence)
+2. [Why Multi-Party Calls Can't Rely on Mesh Alone: The First Limit of WebRTC Architecture](/en/blog/webrtc-poc-2-mesh-limit)
+3. [Turning a WebRTC POC into a Maintainable System: The Role of React, TypeScript, and Go](/en/blog/webrtc-poc-3-maintainable-stack)
+4. [From Mesh to SFU: The Real Turning Point Toward Scalable Video Systems](/en/blog/webrtc-poc-4-sfu-scale)
+5. [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+6. **The Media-Layer Decision: Self-Built SFU, Adopting LiveKit, or a Broadcast Pipeline**
+7. [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
+
+Previous: [There Is No Single Production-Ready: Deriving Strategy From Your Goals](/en/blog/webrtc-poc-5-production-ready-depends-on-goals)
+
+Next: [Beyond the Media Layer: The App Layer Is the Product Value, and Scenarios Change Everything](/en/blog/webrtc-poc-7-app-layer-and-scenarios)
