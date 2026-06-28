@@ -1,0 +1,94 @@
+---
+title: "Before You Draw a Single Box: The Five-Beat Framework and Eight Principles I Use on System Design"
+date: "2026-06-28"
+description: "This is the primer for the 'Designing a News Feed System' series. Before we derive a news feed by hand, I want to pull out the method on its own — a single problem fades, but this five-beat framework and these eight principles apply to any problem. None of it is news-feed-specific: URL shorteners, chat, collaborative editing — the skeleton is the same."
+tags: ["System Design", "System Architecture", "Distributed Systems", "Engineering Thinking", "Learning"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 0
+---
+
+> This is the **primer (Part 0)** of the "Designing a News Feed System" series. The next three parts will take you from one crashing SQL query all the way to the core architecture behind a Twitter / Instagram home timeline. But before we go in, I want to lay out the **method** on its own — because a single problem fades, the method doesn't.
+>
+> An honest note up front: this whole series is a **design exercise**, not a Twitter I actually built. It's closer to what happens on an interview whiteboard, or one person reasoning on paper. For me — and for you — the value was never the answer, but *why* we arrive at it.
+
+## Why method first, problem second
+
+After practising system design for a while, I noticed something: what makes someone win is rarely "knowing the answer." It's having a **stable rhythm for taking a problem apart.**
+
+There are thousands of "how to design a Twitter feed" articles online, and these days an AI hands you a final architecture diagram on demand. If all you have is that diagram, you're no different from those articles — and you'll freeze the moment an interviewer asks "why does this cache need to be here?" The scarce thing, the thing nobody can copy, is **the chain of reasoning**: why each layer has to be added, where exactly the bottleneck bursts, which intuition was wrong to begin with.
+
+This piece lays out the **framework** and the **principles** behind that chain. Treat it as the map for the whole series; every later part is this map applied to one concrete problem.
+
+## A ruler: will this question fork the architecture?
+
+When you hear a vague system design prompt, the first move is **not to draw** — it's to nail down scope. But questions have quality. I use this ruler to decide whether a question is worth asking first:
+
+> **Will the answer fork the architecture?** If different answers lead to **differently shaped systems**, ask it first. If it only affects how the front end presents things (how many items per page, image resolution, comment ordering), it's a detail, not a driver.
+
+For example: loading 20 vs 50 items per page hits the same backend API — no fork, that's a detail. But "how many users," "how many people does each follow on average," "how many times more reads than writes," "must new posts be instantly visible" — different answers grow completely different systems. Those are what you pin down first.
+
+**Look at the macro numbers that change the architecture before the screen-level details.** That's the opening move on any problem.
+
+## The five-beat framework: every problem walks this path
+
+Once scope is clear, I always walk the same five beats. It's no secret sauce, but once it's muscle memory, you don't panic at the whiteboard.
+
+<svg viewBox="0 0 720 130" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The five-beat framework: clarify, estimate, high-level design, drill into bottlenecks, failure trade-offs, in order">
+<defs><marker id="p0a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="130" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="24" y="40" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="83" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">Beat 1</text>
+<text x="83" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">Clarify</text>
+<rect x="160" y="40" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="219" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">Beat 2</text>
+<text x="219" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">Estimate</text>
+<rect x="296" y="40" width="118" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="355" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">Beat 3</text>
+<text x="355" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#0f6e56" font-family="sans-serif">Design</text>
+<rect x="432" y="40" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="491" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#a8341a" font-family="sans-serif">Beat 4</text>
+<text x="491" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a" font-family="sans-serif">Drill in</text>
+<rect x="578" y="40" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="637" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#a8341a" font-family="sans-serif">Beat 5</text>
+<text x="637" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a" font-family="sans-serif">Failure</text>
+<line x1="142" y1="68" x2="158" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="278" y1="68" x2="294" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="414" y1="68" x2="430" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="550" y1="68" x2="576" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+</svg>
+
+*Figure: every system design problem walks this path — clarify → estimate → design → drill in → failure.*
+
+- **Beat 1 · Clarify requirements**: use the "will it fork the architecture" ruler to pin down the real decisive factors — scale, read/write ratio, consistency / latency tolerance.
+- **Beat 2 · Estimate scale**: divide the daily total by the seconds in a day and get a ballpark (engineers call this back-of-the-envelope). Precision doesn't matter; **getting the order of magnitude right** does — often a single ratio (say, 100× more reads than writes) decides the whole problem's pivot.
+- **Beat 3 · High-level design**: first build the dumbest version that works but breaks (I call it V0), and let it show you the bottleneck firsthand; then evolve to V1, V2 against that bottleneck.
+- **Beat 4 · Drill into the bottleneck**: finish off the path you chose — where data lives, what structure holds it, how to go async, how to guarantee nothing is lost.
+- **Beat 5 · Failure and trade-offs**: deliberately break the parts one by one and ask "if this dies, what happens, and can the system degrade gracefully?" This beat separates the strong answers from the rest.
+
+## Eight core principles
+
+A problem fades; principles don't. The eight below are the underlying intuitions I've distilled from problem after problem, transferable to any of them. Skim them now, then come back after the next three parts — you'll find each one gets triggered at least once.
+
+1. **Bottleneck-driven**: don't add a component without a bottleneck. Dumping every component at once *loses* points, because the listener can't tell whether you truly understand or are reciting a checklist. Every layer needs a concrete bottleneck forcing it in.
+2. **Move work from read to write**: when read and write frequencies differ by an order of magnitude, shift the expensive computation to the less frequent side. Compute once, store it, then just grab the ready-made result.
+3. **Don't use one method for everyone**: the 99.9% long tail takes the cheap path; the 0.0x% hot key takes a special path. Forcing one method onto every case is usually where disaster starts.
+4. **Pick the right split dimension**: to route, choose a metric that is stable, predictable, and maps directly to the cost source (e.g. follower count) — not one that swings wildly (e.g. how long one write happened to take).
+5. **Stateless scaling**: pressure doesn't vanish once you relieve it — it flows to the next weakest link, usually the stateful storage layer, and *that* is the real ceiling. Stateless parts scale; stateful parts hold the line.
+6. **Consistency decides life and death**: the same delay is a tolerable degradation in an eventually-consistent system and a fatal error in a strongly-consistent one. The difference isn't technical — it's how much inconsistency the system tolerates.
+7. **Share, don't copy**: anything read repeatedly by many people gets pulled out and stored once for everyone to share — never copied.
+8. **The dumb method never dies**: that early dumb design you dismissed is rarely actually wrong — it just doesn't belong on the hot path. But it's almost always your last fuse.
+
+## None of this is specific to this one problem
+
+The point I want to stress: **not one of these is news-feed-only.**
+
+That route — "build the dumb version, find its first ceiling, change the model instead of buying a bigger machine" — I walked the exact same way building a video system: [where multi-party hits the limit of Mesh](/en/blog/webrtc-poc-2-mesh-limit), then [evolving from Mesh to an SFU](/en/blog/webrtc-poc-4-sfu-scale). Principle 5, "stateless scales, stateful holds the line," is the entire subject of my piece on [scaling a stateful SFU](/en/blog/scaling-stateful-sfu-with-room-affinity). Swap in a URL shortener, chat, or collaborative editing — the skeleton is identical.
+
+**This is a transferable way of thinking**, and what this series wants to do is drill it, part by part, into your instinct.
+
+Now to the real thing. [Part 1](/en/blog/news-feed-system-design-part-1) starts from one of the most natural SQL queries imaginable — one that collapses at scale — and we'll watch together why it has no choice but to evolve.
+
+---
+
+*This is the primer of the "Designing a News Feed System" series. If you want the derivation directly, skip to [Part 1](/en/blog/news-feed-system-design-part-1); but after the main parts, it's worth coming back to those eight principles once more.*

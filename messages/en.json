@@ -95,12 +95,14 @@
     "categories": {
       "go-notes": "Learning Go",
       "webrtc-system": "WebRTC & System Design",
+      "system-design": "System Design",
       "ai-collaboration": "Working with AI",
       "career": "Career & Craft"
     },
     "series": {
       "go-with-ai-agent": "Learning Go with an AI Agent",
-      "webrtc-poc": "WebRTC POC Series"
+      "webrtc-poc": "WebRTC POC Series",
+      "news-feed-system-design": "Designing a News Feed System"
     }
   },
   "resume": {

@@ -95,12 +95,14 @@
     "categories": {
       "go-notes": "Go 學習筆記",
       "webrtc-system": "WebRTC 與系統設計",
+      "system-design": "系統設計",
       "ai-collaboration": "AI 協作",
       "career": "職涯思考"
     },
     "series": {
       "go-with-ai-agent": "AI agent 時代學 Go",
-      "webrtc-poc": "WebRTC POC 系列"
+      "webrtc-poc": "WebRTC POC 系列",
+      "news-feed-system-design": "動態消息系統設計"
     }
   },
   "resume": {

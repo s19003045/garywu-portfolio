@@ -1,0 +1,236 @@
+---
+title: "After You Hit 'Post': Where the Inbox Lives, Who Delivers, and What 'Success' Actually Guarantees"
+date: "2026-06-29"
+description: "Last part we had regular users deliver a post into every follower's inbox at write time. But where does the inbox live? If delivering to 5,000 inboxes makes the user wait, isn't that stuck too? This piece starts from 'what happens if the data is lost,' surfaces the difference between cache and database, Redis's Sorted Set, then uses Kafka to push delivery to the background — and makes the word 'posted' precise."
+tags: ["System Design", "System Architecture", "Distributed Systems", "Redis", "Kafka", "Cache", "Engineering Thinking"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 2
+---
+
+> This is the second part of the "Designing a News Feed System" series. I'd read [Part 1](/en/blog/news-feed-system-design-part-1) first — there we derived, from one crashing SQL query, the "push for regulars, pull for celebrities" hybrid. This part fills the three holes we deliberately left: where the inbox lives, how delivery doesn't block the user, and who fixes a failure.
+
+## Picking up from last time: we still owe three answers
+
+Quick recap of where Part 1 ended. We're designing a home timeline (the latest posts from people you follow, seen when you open the app). The naive "fetch 200 people's posts and sort at read time" collapses at scale, so we moved the expensive work to the moment of posting: **when A posts, deliver it into every follower's "inbox"**; when B views the feed, just grab their own inbox. Celebrities have too many followers and overflow, so celebrities switch to "don't deliver; fetch live at read time."
+
+Sounds complete, but I was actually bluffing back then, because there were three questions I couldn't answer:
+
+1. Where exactly does this "inbox" **live**? What holds it so that "deliver," "take the latest 20," and "drop the too-old" are all fast?
+2. A regular post delivers to 5,000 inboxes. If those 5,000 deliveries make **the user stand there and wait**, isn't that stuck too?
+3. If delivery fails halfway, who fixes it? How do we guarantee a post "arrives eventually, even if late"?
+
+This part fills those three holes. And filling them naturally forces out two things you often hear but may not truly grasp: **Redis** and **Kafka**.
+
+## Where should the inbox live: first ask "what if it's lost"
+
+I used to think about "storing data" very simply: data goes into a database, and once stored it's safe. Later I learned a more important classifying question that decides where a piece of data should live —
+
+> **If this data is entirely lost, what happens?**
+>
+> - If it's lost and **never comes back, and something bad happens** — it's your "source of truth," and must be stored well in a reliable, durable place (like a traditional database).
+> - If it's lost and **can be recomputed, just with some hassle** — it's only a "cache," and can sit in a faster but less durable place.
+
+Apply it to our things:
+
+- **Post bodies, follow relations**: source of truth. A lost post is gone; nobody can conjure it back. → Reliable database.
+- **The inbox (each person's pile of feed posts)**: actually **recomputable**. If someone's inbox is entirely lost, worst case we go back to "who they follow, what those people recently posted" and re-deliver. Slow, but nothing is permanently lost. → It's just a cache.
+
+<svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two kinds of storage: the database is the source of truth and losing it is a disaster; Redis is a cache and losing it just means recompute">
+<rect x="0" y="0" width="720" height="210" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="44" width="300" height="128" rx="11" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="190" y="76" text-anchor="middle" font-size="15" font-weight="700" fill="#23221f" font-family="sans-serif">Database = source of truth</text>
+<text x="190" y="104" text-anchor="middle" font-size="12.5" fill="#6b6a64" font-family="sans-serif">Stores: post bodies, follow relations</text>
+<text x="190" y="140" text-anchor="middle" font-size="13" font-weight="600" fill="#a8341a" font-family="sans-serif">lost with no backup → a true disaster</text>
+<rect x="380" y="44" width="300" height="128" rx="11" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="530" y="76" text-anchor="middle" font-size="15" font-weight="700" fill="#0f6e56" font-family="sans-serif">Redis = cache</text>
+<text x="530" y="104" text-anchor="middle" font-size="12.5" fill="#0f6e56" font-family="sans-serif">Stores: everyone's inbox</text>
+<text x="530" y="140" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">lost → recompute from DB, just slow</text>
+</svg>
+
+*Figure: the question "what if it's lost" directly decides where a piece of data lives.*
+
+So what's the "faster" place? Here **Redis** enters.
+
+Simply put, **Redis is a database that keeps data in "memory."** A regular database writes to disk (durable, cheap, but slow); Redis keeps data in memory (extremely fast, but memory is pricier, and if the machine restarts, without special handling the data is gone).
+
+So Redis and the "inbox" are a match made in heaven: the inbox is read extremely often (hundreds of thousands a second) and needs to be fast — Redis is fast; the inbox is recomputable and not fatal if lost — Redis's "not very durable" weakness happens to be one we don't care about. **Choosing a tool isn't picking the strongest; it's picking the one whose weakness you happen not to care about.**
+
+## What holds it? A structure that "auto-sorts"
+
+The inbox moved into Redis, but one question remains: **which structure** in Redis holds this pile of posts?
+
+You might think: it's just a list (array), put them in one by one. Sure, but look at what the inbox must do:
+
+- On delivery, insert the new post at the "right time position."
+- At feed time, take the "latest 20."
+- The inbox can't grow forever; it must "drop the too-old."
+
+A plain list makes you maintain order by hand — tedious. Redis happens to have a structure born for this: the **Sorted Set**.
+
+Its special quality: **every item carries a "score," and Redis keeps them sorted by score automatically.** You never sort by hand.
+
+What's the score? The answer is natural — **use "post time" as the score**. Newer means a higher score, and the Sorted Set puts it nearer the front. So the inbox is always time-sorted, with zero effort from you.
+
+<svg viewBox="0 0 720 290" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The inbox is a Redis Sorted Set, each post carries a score (post time), auto-sorted by time, supporting deliver, take-latest, and drop-old">
+<rect x="0" y="0" width="720" height="290" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="36" y="36" font-size="12.5" font-family="monospace" fill="#3c3489">B's inbox (Sorted Set)</text>
+<rect x="36" y="48" width="320" height="208" rx="11" fill="#ffffff" stroke="#d8d4cb"/>
+<text x="356" y="66" text-anchor="end" font-size="11" fill="#6b6a64" font-family="sans-serif">↑ newest</text>
+<rect x="52" y="74" width="288" height="30" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="64" y="94" font-size="12" fill="#0f6e56" font-family="monospace">score = time 10:42</text><text x="232" y="94" font-size="12" fill="#23221f" font-family="monospace">post #987</text>
+<rect x="52" y="110" width="288" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="64" y="130" font-size="12" fill="#0f6e56" font-family="monospace">score = time 10:39</text><text x="232" y="130" font-size="12" fill="#23221f" font-family="monospace">post #654</text>
+<rect x="52" y="146" width="288" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="64" y="166" font-size="12" fill="#0f6e56" font-family="monospace">score = time 10:31</text><text x="232" y="166" font-size="12" fill="#23221f" font-family="monospace">post #321</text>
+<rect x="52" y="182" width="288" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="64" y="202" font-size="12" fill="#0f6e56" font-family="monospace">score = time 10:18</text><text x="232" y="202" font-size="12" fill="#23221f" font-family="monospace">post #109</text>
+<text x="196" y="238" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">…Redis auto-sorts by score…  ↓ oldest</text>
+<rect x="382" y="74" width="300" height="44" rx="8" fill="#ffffff" stroke="#1d9e75"/>
+<text x="396" y="92" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">Deliver a new post</text>
+<text x="396" y="109" font-size="11" fill="#6b6a64" font-family="sans-serif">into the inbox, score = post time</text>
+<rect x="382" y="128" width="300" height="44" rx="8" fill="#ffffff" stroke="#d8d4cb"/>
+<text x="396" y="146" font-size="12.5" font-weight="600" fill="#23221f" font-family="sans-serif">Take the latest 20</text>
+<text x="396" y="163" font-size="11" fill="#6b6a64" font-family="sans-serif">at feed time, take 20 from the top-score end</text>
+<rect x="382" y="182" width="300" height="44" rx="8" fill="#ffffff" stroke="#d8d4cb"/>
+<text x="396" y="200" font-size="12.5" font-weight="600" fill="#23221f" font-family="sans-serif">Drop the too-old</text>
+<text x="396" y="217" font-size="11" fill="#6b6a64" font-family="sans-serif">keep only the latest 1000, trim the rest</text>
+</svg>
+
+*Figure: with a Sorted Set holding the inbox, "sorting" is built in — you only throw things in, and order maintains itself.*
+
+If you want to see the actual Redis commands (skip to the plain words after if it's opaque):
+
+```bash
+# Deliver a post into B's inbox (score = post time)
+ZADD feed:user_B 1042 post_987
+
+# View feed: take the latest 20
+ZREVRANGE feed:user_B 0 19
+
+# Cap length: keep only the latest 1000, trim the rest
+ZREMRANGEBYRANK feed:user_B 0 -1001
+```
+
+### A key decision in passing: the inbox holds only "ids," not "whole posts"
+
+You may have noticed the inbox above holds "post #987" — an **id** — not the post's full content. That's deliberate, and crucial.
+
+Imagine the inbox held full content: a celebrity's long post would be **fully copied** into their tens of millions of followers' inboxes — the same post stored tens of millions of times, storage explodes, and changing one word means changing tens of millions of places.
+
+So the right approach: **the inbox holds only the post's id (very light); the full content is stored once, separately, shared by all.** At feed time, get 20 ids from the inbox, then fetch their content. Like a library's **index card** — the card has only the title and number; the actual book sits once on the shelf, shared, rather than each card carrying a full copy of the book.
+
+> Here's a principle that recurs: **anything read repeatedly by many people gets pulled out and stored once, shared — never copied.** Remember it; it comes back.
+
+## The second hole: why should the user wait for 5,000 deliveries?
+
+Inbox solved; back to the second hole.
+
+A regular post delivers to 5,000 followers' inboxes. If our flow is "user hits post → system dutifully delivers all 5,000 → only then replies 'posted,'" then this person must **stand there waiting for 5,000 deliveries to finish**. 5,000 is fine, but what about a somewhat popular account with a hundred-odd thousand followers? They'll wait until they're fed up.
+
+Where's the problem? We **bound together** two things that could be separate:
+
+- "**Safely accept the post**" — the user cares a lot; must be fast.
+- "**Push to every follower**" — the user doesn't really care about the details; they just want it to "eventually arrive," a few seconds late is fine.
+
+Since the user doesn't care to wait for the second, why make them? **Push it to the background and let the user go the moment they hit post.**
+
+This "don't make the user wait; do it in the background" approach is called **asynchronous**. And to reliably hand work to the background, we need a dedicated role — this is where **Kafka** enters.
+
+## Kafka: a conveyor belt that never drops things
+
+Forget the name "Kafka" first; think about what we need:
+
+We need a place where, at post time, the user can "drop in a **delivery ticket** and leave," and this place must **guarantee the ticket isn't lost**, with a row of workers later taking tickets off and actually delivering to inboxes.
+
+Kafka is that thing. Think of it as a **reliable conveyor belt**, or a **to-do list that's never lost**:
+
+- You put a ticket on the belt, and it keeps it safe (tickets are written to disk and replicated several times, surviving a single machine failure).
+- Behind the belt stands a row of **workers**, taking tickets off one by one to process (actually delivering to those 5,000 inboxes).
+
+<svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kafka async write: the app server drops a ticket into Kafka then replies success immediately; background workers take tickets from Kafka, deliver to inboxes, retry on failure">
+<defs><marker id="b3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="220" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="20" width="150" height="32" rx="7" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="115" y="40" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">① reply "success" now</text>
+<line x1="115" y1="52" x2="115" y2="76" stroke="#1d9e75" stroke-width="1.5" marker-end="url(#b3)"/>
+<rect x="40" y="78" width="150" height="58" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="115" y="113" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">App server</text>
+<rect x="240" y="78" width="170" height="58" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="325" y="104" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489" font-family="sans-serif">Kafka (conveyor)</text>
+<text x="325" y="122" text-anchor="middle" font-size="11" fill="#3c3489" font-family="sans-serif">tickets never lost</text>
+<rect x="460" y="78" width="150" height="58" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="535" y="104" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">delivery workers ×N</text>
+<text x="535" y="122" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">add more if needed</text>
+<rect x="650" y="78" width="40" height="58" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="670" y="111" text-anchor="middle" font-size="12" font-weight="600" fill="#0f6e56" font-family="sans-serif">inbox</text>
+<line x1="190" y1="107" x2="238" y2="107" stroke="#8a887f" stroke-width="1.5" marker-end="url(#b3)"/>
+<line x1="410" y1="107" x2="458" y2="107" stroke="#8a887f" stroke-width="1.5" marker-end="url(#b3)"/>
+<line x1="610" y1="107" x2="648" y2="107" stroke="#8a887f" stroke-width="1.5" marker-end="url(#b3)"/>
+<text x="325" y="162" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">② ticket on the belt → reply "success" to the user</text>
+<text x="535" y="162" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">③ workers deliver at their pace, retry on failure</text>
+</svg>
+
+*Figure: the poster drops the ticket on the belt and leaves; the real delivery is digested by background workers.*
+
+With this belt, the new flow: user hits post → app server does only the two minimum things (store the post body, drop a "please deliver post_987" ticket onto Kafka) → **reply "success" instantly**. At this moment not one of the 5,000 inboxes is delivered yet, but the user has already left. Background workers then unhurriedly take tickets and deliver.
+
+This belt incidentally solves three things, each very practical:
+
+- **No waiting (decoupling)**: the poster drops the ticket and leaves, no need to wait for delivery.
+- **Peaks don't burst (buffering)**: on New Year's Eve when everyone posts like mad, tickets pile on the belt first, and workers digest at their own steady rate, never crushed by a sudden flood. The belt is like a reservoir.
+- **Failure-proof (retry)**: once on the belt, a ticket is safely kept. A worker dies mid-process — the ticket is still there, another worker redoes it. Nothing vanishes.
+
+## So what does "posted" actually guarantee?
+
+Here's a subtle question interviewers love, and one that genuinely matters in practice:
+
+The moment the user gets "success," their post is **not yet in any follower's inbox** (workers are just starting). So what does "success" guarantee? If the whole system crashes right at "replied success but workers haven't moved," does the post vanish?
+
+The answer is no, and the key is the earlier "app server does only two things": **store the post body, put the ticket on Kafka.** As long as both have landed (post in the reliable database, ticket written to Kafka which persists to disk), then even if the app server explodes the next millisecond and all workers strike, the post and the ticket still sit safely there; once recovered, workers finish delivery.
+
+So "posted" precisely means:
+
+> **"Your post has been safely accepted, and will definitely reach followers"** — not "has already reached followers."
+
+This distinction is the "commitment boundary" of an async system. And it holds because of a spec we set at the very start of Part 1: **new posts only need to "eventually be visible"; a few seconds' delay is fine.** Precisely because the user accepts "eventually arrives" rather than "arrives instantly" do we earn the right to push delivery to the background. A foreshadowing pays off here.
+
+## The retry trap, and a property you use every day
+
+We said "if a worker dies, retry." But "retry" brings a new danger, another favourite of interviewers:
+
+Suppose a worker is delivering a post and dies at the 3,000th inbox. The ticket is still on the belt, so another worker delivers from the start again. So… the 3,000 **already-delivered** inboxes — will the same post appear **twice** in some followers' inboxes?
+
+We need a property guaranteeing "redo doesn't break," called **idempotency**. Sounds mysterious, but it's something you use daily:
+
+> An elevator call button: press once or five times, the elevator comes once. Extra presses have no side effect. That's idempotency — **doing the same operation once or many times yields exactly the same result.**
+
+How does our delivery achieve idempotency? The last section already paved the way. Remember each slot in the inbox (Sorted Set) is identified by **post id**? Delivering the same post id a second time **doesn't create a new slot** — it overwrites the existing one. So redelivery is safe; the post won't become two.
+
+But here's a small trap I missed at first: the "score" written on redelivery must match the original. If on retry a worker conveniently uses "the time right now" as the score instead of "the post's original time," the second delivery **changes** the post's time, and its position in the follower's feed jumps around inexplicably.
+
+So correct idempotency isn't free — it relies on **using something stable that belongs to the post itself as the key**: post id as each slot's identity, and the post's original time (not the delivery moment) as the score. As long as both come from the post itself, delivering the same post any number of times yields an identical result.
+
+This idempotency idea is everywhere. I've stepped in the same hole in other contexts — when an action can be triggered repeatedly, you must make "repeats" cause no harm. Many seemingly different problems are, underneath, the same one.
+
+## Don't forget celebrities: they don't ride this belt
+
+To wrap up. The whole "drop a ticket → workers deliver to inboxes" async path is for **regular people**. Celebrities?
+
+Recall Part 1: a celebrity's post is **not delivered to inboxes**. So at celebrity post time, this belt shouldn't even start — if, like regulars, we dropped the celebrity's delivery tickets on too, then a celebrity with hundreds of millions of followers posting once would flood the belt with hundreds of millions of tickets, instantly crushing the workers. This is the same monster (hot key) as Part 1's "overflowing inboxes," only this time it crushes the workers.
+
+So Part 1's "route by follower count" logic actually runs all the way here: **only regulars ride Kafka delivery; celebrities don't enter Kafka at all, just update their own post, and followers fetch it live when they come online.** The split isn't only at "deliver to inboxes or not"; it extends to "ride the belt or not."
+
+## Where we stand now
+
+Joining these two parts, the write-side story is complete:
+
+User posts → system stores the post, routes by follower count. **Regular**: drop a delivery ticket on Kafka, reply "success" instantly, background workers idempotently deliver into each inbox (held in a Redis Sorted Set, post time as score, only ids not content). **Celebrity**: just update their own post, no delivery. **At feed time**, merge the inbox and the celebrities' posts, sorted.
+
+We now have a design that runs smoothly, holds up, and doesn't block the user. But there's a saying in engineering: **what truly tests a system isn't when everything is fine — it's when things start to break.**
+
+In Part 3, we'll break things on purpose: what if the background workers can't keep up and tickets pile up? What if the Redis holding hundreds of millions of inboxes goes down entirely — and why might that trigger an "avalanche" that drags the database down too? And the monster called hot key makes its third appearance in this system. Only after walking through all these broken scenarios is the design truly complete.
+
+---
+
+*This is the second part of the "Designing a News Feed System" series. If you came in here, I'd go back to [Part 1](/en/blog/news-feed-system-design-part-1) — the whole derivation reads clearer in order.*

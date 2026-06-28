@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>動態消息系統設計 · 圖文筆記</title>
+<style>
+:root{
+  --ink:#23221f; --paper:#fbfaf7; --muted:#6b6a64; --line:#e2ded4; --chip:#f1efe8;
+  --teal:#0f6e56; --teal-bg:#e4f3ee; --teal-line:#1d9e75;
+  --red:#a8341a; --red-bg:#f8eae5; --red-line:#d85a30;
+  --amber:#854f0b; --amber-bg:#faeeda; --amber-line:#ba7517;
+  --indigo:#3c3489; --indigo-bg:#eeedfe; --indigo-line:#7f77dd;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","Noto Sans TC","Segoe UI",sans-serif;
+  --mono:"SF Mono","Cascadia Code","JetBrains Mono",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  line-height:1.8;font-size:16px;
+}
+.wrap{max-width:880px;margin:0 auto;padding:56px 28px 96px}
+svg{display:block;width:100%;height:auto}
+svg text{font-family:var(--sans)}
+
+/* header */
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);margin:0 0 14px}
+h1{font-size:38px;line-height:1.18;font-weight:800;letter-spacing:-.01em;margin:0 0 18px}
+.thesis{font-size:19px;line-height:1.7;color:var(--ink);margin:0 0 14px;font-weight:500}
+.thesis b{color:var(--teal)}
+.meta{font-family:var(--mono);font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0;margin:26px 0 0;display:flex;gap:22px;flex-wrap:wrap}
+
+/* sections */
+section{margin:64px 0 0}
+.sec-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;display:flex;align-items:center;gap:10px}
+.sec-eyebrow .num{color:var(--teal);font-weight:700}
+h2{font-size:27px;line-height:1.25;font-weight:800;letter-spacing:-.01em;margin:0 0 8px}
+h3{font-size:20px;font-weight:700;margin:38px 0 6px}
+h4{font-size:16px;font-weight:700;margin:24px 0 4px;color:var(--ink)}
+p{margin:12px 0}
+.lead{color:var(--muted);font-size:15.5px;margin:0 0 6px}
+strong{font-weight:700}
+code{font-family:var(--mono);font-size:.88em;background:var(--chip);padding:2px 6px;border-radius:5px;color:var(--indigo)}
+ul,ol{margin:12px 0;padding-left:22px}
+li{margin:7px 0}
+
+/* figure */
+figure{margin:30px 0;padding:22px 20px 14px;background:#fff;border:1px solid var(--line);border-radius:14px}
+figcaption{font-size:13.5px;color:var(--muted);margin-top:12px;text-align:center;line-height:1.6}
+figcaption b{color:var(--ink)}
+
+/* callouts */
+.callout{border-radius:12px;padding:16px 18px;margin:20px 0;border:1px solid;border-left-width:5px}
+.callout .tag{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;display:block;margin-bottom:6px}
+.callout p{margin:4px 0}
+.bottleneck{background:var(--red-bg);border-color:var(--red-line)}
+.bottleneck .tag{color:var(--red)}
+.solution{background:var(--teal-bg);border-color:var(--teal-line)}
+.solution .tag{color:var(--teal)}
+.celeb{background:var(--amber-bg);border-color:var(--amber-line)}
+.celeb .tag{color:var(--amber)}
+.insight{background:var(--indigo-bg);border-color:var(--indigo-line)}
+.insight .tag{color:var(--indigo)}
+
+/* principle cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:22px 0}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 16px}
+.card .k{font-family:var(--mono);font-size:12px;color:var(--teal);font-weight:700;margin-bottom:4px}
+.card .v{font-size:14.5px;line-height:1.6}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;margin:20px 0;font-size:14.5px}
+.tbl th,.tbl td{border:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}
+.tbl th{background:var(--chip);font-weight:700}
+.tbl td.t{color:var(--teal);font-weight:600}
+.tbl td.r{color:var(--red);font-weight:600}
+
+/* code block */
+pre{background:#1f1e1b;color:#e8e6df;border-radius:12px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.6;margin:18px 0}
+pre .c{color:#9aa089}
+pre .k{color:#e0a35a}
+
+/* divider */
+.rule{height:1px;background:var(--line);border:0;margin:0}
+
+.summary{background:#1f1e1b;color:#f3f1ea;border-radius:14px;padding:22px 24px;margin:28px 0;font-size:15px;line-height:1.8}
+.summary .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#8fd9bf;display:block;margin-bottom:8px}
+
+footer{margin:72px 0 0;padding-top:22px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+
+@media(max-width:600px){
+  .wrap{padding:40px 18px 70px}
+  h1{font-size:30px}
+  h2{font-size:23px}
+  .thesis{font-size:17px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<marker id="arw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker></defs></svg>
+
+<div class="wrap">
+
+<header>
+<p class="eyebrow">System Design · Home Timeline</p>
+<h1>動態消息系統設計</h1>
+<p class="thesis">整題的靈魂只有一句：<b>把昂貴的工，從每秒 58 萬次的「讀」，搬到每秒 5.8 千次的「寫」。</b>其餘所有元件，都是被一個具體瓶頸逼出來的。</p>
+<div class="meta">
+  <span>Twitter / Instagram 風格</span>
+  <span>5 億用戶 · 2 億 DAU</span>
+  <span>讀寫比 100:1</span>
+  <span>五拍框架</span>
+</div>
+</header>
+
+<!-- ============ 心法 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">★</span> 先記這個</p>
+<h2>八條核心心法</h2>
+<p class="lead">題目會忘，心法不會。這八條是換任何題都能套用的底層。</p>
+<div class="cards">
+  <div class="card"><div class="k">01 瓶頸驅動</div><div class="v">沒有瓶頸就不加元件。一開口倒出所有元件＝扣分，因為面試官無法分辨你是真懂還是背清單。</div></div>
+  <div class="card"><div class="k">02 工從讀搬到寫</div><div class="v">讀寫頻率差數量級時，把昂貴計算挪到頻率低的一側。算一次、存起來、之後直接拿。</div></div>
+  <div class="card"><div class="k">03 不用單一方案</div><div class="v">99.9% 長尾走便宜的路，0.0x% 的 hot key 走特別的路。</div></div>
+  <div class="card"><div class="k">04 挑對分流維度</div><div class="v">選穩定、可預測、對應成本來源的指標（粉絲數），不要選會抖的（寫入耗時）。</div></div>
+  <div class="card"><div class="k">05 無狀態擴展</div><div class="v">壓力解開不會消失，只流到下一個最弱環節——通常是有狀態的儲存層，那才是天花板。</div></div>
+  <div class="card"><div class="k">06 一致性定生死</div><div class="v">同一個延遲，在「最終一致」系統是可容忍退化，在「強一致」系統是致命錯誤。</div></div>
+  <div class="card"><div class="k">07 共享不複製</div><div class="v">凡是被大量人重複讀的東西，抽出來存一份大家共享，絕不複製。</div></div>
+  <div class="card"><div class="k">08 笨方法不死</div><div class="v">早期的笨設計很少是錯的，它只是不該在熱路徑上——但幾乎永遠是你最後的保險絲。</div></div>
+</div>
+</section>
+
+<!-- ============ 五拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">框架</span> 怎麼走一道題</p>
+<h2>五拍框架</h2>
+<figure>
+<svg viewBox="0 0 700 120" role="img" aria-label="五拍框架：釐清需求、估算規模、高層設計、深挖瓶頸、失敗取捨">
+<g>
+<rect x="15" y="34" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="74" y="56" text-anchor="middle" class="d-tag" fill="#0f6e56" font-family="var(--mono)" font-size="11">01</text>
+<text x="74" y="76" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f">釐清需求</text>
+<rect x="153" y="34" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="212" y="56" text-anchor="middle" fill="#0f6e56" font-size="11">02</text>
+<text x="212" y="76" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f">估算規模</text>
+<rect x="291" y="34" width="118" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="350" y="56" text-anchor="middle" fill="#0f6e56" font-size="11">03</text>
+<text x="350" y="76" text-anchor="middle" font-size="14" font-weight="600" fill="#0f6e56">高層設計</text>
+<rect x="429" y="34" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="488" y="56" text-anchor="middle" fill="#a8341a" font-size="11">04</text>
+<text x="488" y="76" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a">深挖瓶頸</text>
+<rect x="567" y="34" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="626" y="56" text-anchor="middle" fill="#a8341a" font-size="11">05</text>
+<text x="626" y="76" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a">失敗取捨</text>
+<line x1="133" y1="62" x2="151" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="271" y1="62" x2="289" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="409" y1="62" x2="427" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="547" y1="62" x2="565" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+</g>
+</svg>
+<figcaption>每道系統設計題都照這條路走：<b>釐清 → 估算 → 設計 → 深挖 → 失敗</b>。</figcaption>
+</figure>
+</section>
+
+<!-- ============ 第一拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">01</span> 第一拍</p>
+<h2>釐清需求</h2>
+<p>聽到模糊題目，第一件事<strong>不是畫架構</strong>，而是問範圍。判斷一個範圍問題好不好，用這把尺：</p>
+<div class="insight callout">
+<span class="tag">關鍵的尺</span>
+<p><strong>「這個問題會不會 fork 架構？」</strong>不同答案會導向不同架構的，才值得問；只影響前端呈現的（一次載幾筆、圖片解析度、回覆排序），是細節不是驅動。</p>
+</div>
+<p>這題真正會 fork 架構的三個勝負手：<strong>規模</strong>（用戶數、追蹤數、發文量）、<strong>讀寫比</strong>（決定 push 還是 pull）、<strong>一致性／延遲容忍度</strong>（新貼文要不要即時可見）。</p>
+<p>本題定下的範圍：5 億註冊、2 億 DAU、平均追蹤 200 人、每天約 5 億則發文；讀寫比約 100:1；feed P99 &lt; 200ms，但新貼文<strong>最終一致即可</strong>；99% 的人 &lt; 5000 粉絲，極少數名人上千萬。</p>
+</section>
+
+<!-- ============ 第二拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">02</span> 第二拍</p>
+<h2>估算規模</h2>
+<table class="tbl">
+<tr><th>指標</th><th>算式</th><th>數量級</th></tr>
+<tr><td>寫入 QPS</td><td><code>5 億 ÷ 86400</code></td><td class="t">≈ 5,800 / s</td></tr>
+<tr><td>讀取 QPS</td><td><code>寫入 × 100</code></td><td class="r">≈ 580,000 / s</td></tr>
+</table>
+<p>關鍵體感：<strong>讀取比寫入高 100 倍</strong>。這個比例是後面所有設計的轉軸。</p>
+</section>
+
+<!-- ============ 第三拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">03</span> 第三拍</p>
+<h2>高層設計：V0 → V1 → V2</h2>
+
+<h3>V0 · 天真拉取（naive pull）</h3>
+<p>三張正規化的表，feed 在讀取當下現場 JOIN 組出來。</p>
+<figure>
+<svg viewBox="0 0 700 240" role="img" aria-label="V0 流程：Client 到 App Server 到 Postgres，瓶頸是讀取時的跨表排序查詢">
+<rect x="30" y="40" width="130" height="58" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="95" y="74" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f">Client</text>
+<rect x="230" y="40" width="150" height="58" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="305" y="66" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f">App Server</text>
+<text x="305" y="84" text-anchor="middle" font-size="11" fill="#6b6a64">幾乎不做事</text>
+<rect x="460" y="40" width="190" height="58" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="555" y="66" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f">Postgres</text>
+<text x="555" y="84" text-anchor="middle" font-size="11" fill="#6b6a64">users / follows / posts</text>
+<line x1="160" y1="69" x2="228" y2="69" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="380" y1="69" x2="458" y2="69" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="540" y1="98" x2="470" y2="138" stroke="#d85a30" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arw)"/>
+<rect x="230" y="140" width="420" height="74" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="248" y="166" font-size="13" font-weight="700" fill="#a8341a">瓶頸：讀取當下跨 200 人撈取＋排序</text>
+<text x="248" y="188" font-size="12.5" fill="#a8341a">ORDER BY … LIMIT 20 → 拿 20 筆卻得碰上千筆</text>
+<text x="248" y="206" font-size="12.5" fill="#a8341a">× 580K QPS，每次讀取都在 read time 重跑一遍</text>
+</svg>
+<figcaption>貴的不是「請求數量」，而是<b>每一次讀取要做的事太貴</b>，而且發生在最頻繁的 read time。</figcaption>
+</figure>
+<pre><span class="c">-- 打開 feed 時跑的那句 SQL</span>
+SELECT p.* FROM posts p
+WHERE p.user_id <span class="k">IN</span> (SELECT following_id FROM follows WHERE follower_id = U)
+<span class="k">ORDER BY</span> p.created_at DESC
+<span class="k">LIMIT</span> 20;</pre>
+<p><code>ORDER BY … LIMIT</code> 最致命：為了拿最新 20 筆，DB 必須先撈出 200 人最近的<strong>全部</strong>貼文、合併排序、再丟掉其餘（為了 top-K 付出全量代價）。關鍵字是<strong>時機</strong>（read time），不是地點（DB）。地點難改，<strong>時機可改</strong>。</p>
+
+<h3>核心翻轉 · 把工從讀搬到寫</h3>
+<figure>
+<svg viewBox="0 0 700 180" role="img" aria-label="核心翻轉：讀取 580K 每秒，寫入 5.8K 每秒，把昂貴排序搬到寫入端">
+<rect x="30" y="40" width="230" height="100" rx="11" fill="#f8eae5" stroke="#d85a30"/>
+<text x="145" y="74" text-anchor="middle" font-size="22" font-weight="800" fill="#a8341a">580,000 / s</text>
+<text x="145" y="98" text-anchor="middle" font-size="13" fill="#a8341a">讀取 · 昂貴排序原本在這</text>
+<text x="145" y="120" text-anchor="middle" font-size="12" fill="#6b6a64">read time，每秒重算 58 萬次</text>
+<rect x="455" y="55" width="215" height="70" rx="11" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="562" y="86" text-anchor="middle" font-size="20" font-weight="800" fill="#0f6e56">5,800 / s</text>
+<text x="562" y="108" text-anchor="middle" font-size="13" fill="#0f6e56">寫入 · 搬到這裡做一次</text>
+<line x1="262" y1="90" x2="453" y2="90" stroke="#0f6e56" stroke-width="2" marker-end="url(#arw)"/>
+<text x="357" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f6e56">差 100 倍</text>
+</svg>
+<figcaption><b>算一次、存起來，之後 100 次讀取直接拿現成的。</b>這就是 fan-out-on-write 的起點。</figcaption>
+</figure>
+
+<h3>V1 · Fan-out-on-write（寫入推播）</h3>
+<figure>
+<svg viewBox="0 0 700 280" role="img" aria-label="V1：寫入時 A 發文展開粉絲寫入各 inbox，讀取時 B 直接讀自己 inbox，瓶頸是名人 fan-out 爆炸">
+<text x="30" y="26" font-size="12.5" font-weight="700" fill="#6b6a64">寫入路徑（變貴，但頻率低）</text>
+<rect x="30" y="38" width="100" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="80" y="67" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f">A 發文</text>
+<rect x="170" y="38" width="120" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="230" y="67" text-anchor="middle" font-size="13.5" font-weight="600" fill="#0f6e56">查 A 的粉絲</text>
+<rect x="330" y="38" width="150" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="405" y="60" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">寫入每個 inbox</text>
+<text x="405" y="78" text-anchor="middle" font-size="11" fill="#0f6e56">fan-out N 次</text>
+<line x1="130" y1="62" x2="168" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="290" y1="62" x2="328" y2="62" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<rect x="520" y="34" width="70" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="555" y="51" text-anchor="middle" font-size="11" fill="#0f6e56">inbox</text>
+<rect x="520" y="64" width="70" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="555" y="81" text-anchor="middle" font-size="11" fill="#0f6e56">inbox</text>
+<rect x="600" y="49" width="40" height="26" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="620" y="66" text-anchor="middle" font-size="11" fill="#6b6a64">…</text>
+<line x1="480" y1="58" x2="518" y2="49" stroke="#8a887f" stroke-width="1.2" marker-end="url(#arw)"/>
+<line x1="480" y1="66" x2="518" y2="74" stroke="#8a887f" stroke-width="1.2" marker-end="url(#arw)"/>
+<text x="30" y="122" font-size="12.5" font-weight="700" fill="#6b6a64">讀取路徑（變到不能再笨）</text>
+<rect x="30" y="134" width="100" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="80" y="163" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f">B 開 App</text>
+<rect x="170" y="134" width="180" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="260" y="156" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">直接讀自己的 inbox</text>
+<text x="260" y="174" text-anchor="middle" font-size="11" fill="#0f6e56">一次查詢 · O(1)</text>
+<line x1="130" y1="158" x2="168" y2="158" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<rect x="30" y="206" width="610" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="48" y="232" font-size="13" font-weight="700" fill="#a8341a">瓶頸：名人 fan-out 爆炸（hot key）</text>
+<text x="48" y="252" font-size="12.5" fill="#a8341a">3000 萬粉絲 → 一次發文寫 3000 萬個 inbox：同步卡死使用者、外溢拖垮全站、多數寫入給不會來讀的人</text>
+</svg>
+<figcaption>讀取被壓到 O(1)，但寫入端對名人爆炸——這跟<b>售票熱門票券被打爆</b>是同一隻怪。</figcaption>
+</figure>
+<div class="solution callout">
+<span class="tag">原則</span>
+<p>hot path（讀取）越笨越好，把複雜度推給比較不頻繁的那一側（寫入）。</p>
+</div>
+
+<h3>V2 · 混合推拉（hybrid push / pull）</h3>
+<p>問題只出在那 0.0x% 的名人。普通人的 push 跑得好好的，不必動——只對名人換一種相反的策略。</p>
+<figure>
+<svg viewBox="0 0 700 350" role="img" aria-label="V2：寫入時依粉絲數分流，普通人 push、名人只寫共享快取；讀取時把 inbox 與名人快取在記憶體 merge">
+<text x="20" y="24" font-size="12.5" font-weight="700" fill="#6b6a64">寫入路徑（依粉絲數分流）</text>
+<rect x="30" y="38" width="90" height="46" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="75" y="66" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f">發文</text>
+<rect x="160" y="38" width="140" height="46" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="230" y="60" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489">粉絲數路由</text>
+<text x="230" y="77" text-anchor="middle" font-size="11" fill="#3c3489">&lt; 10萬 ? </text>
+<line x1="120" y1="61" x2="158" y2="61" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<rect x="350" y="20" width="200" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="450" y="47" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">普通人 → push 寫 inbox</text>
+<rect x="350" y="92" width="220" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="460" y="113" text-anchor="middle" font-size="13" font-weight="600" fill="#854f0b">名人 → 只寫共享快取</text>
+<text x="460" y="128" text-anchor="middle" font-size="11" fill="#854f0b">不 fan-out</text>
+<line x1="300" y1="55" x2="348" y2="42" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="300" y1="68" x2="348" y2="110" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="20" y1="170" x2="680" y2="170" stroke="#e2ded4" stroke-width="1" stroke-dasharray="5 5"/>
+<text x="20" y="198" font-size="12.5" font-weight="700" fill="#6b6a64">讀取路徑（記憶體合併）</text>
+<rect x="30" y="210" width="170" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="115" y="237" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">讀 inbox（普通人）</text>
+<rect x="30" y="266" width="170" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="115" y="293" text-anchor="middle" font-size="13" font-weight="600" fill="#854f0b">pull 名人共享快取</text>
+<rect x="270" y="238" width="120" height="48" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="330" y="260" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489">記憶體 merge</text>
+<text x="330" y="277" text-anchor="middle" font-size="11" fill="#3c3489">兩串皆已排序</text>
+<rect x="460" y="238" width="200" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="560" y="266" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f">前 20 筆 → 前端</text>
+<line x1="200" y1="232" x2="268" y2="254" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="200" y1="288" x2="268" y2="268" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="390" y1="262" x2="458" y2="262" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+</svg>
+<figcaption><b>分流維度＝粉絲數</b>（穩定、可預測、對應成本），不是會抖的「寫入耗時」。pull 的成本被壓到只剩幾個名人，不是 200 人。</figcaption>
+</figure>
+
+<h4>push vs pull 對照</h4>
+<table class="tbl">
+<tr><th></th><th>Push（fan-out-on-write）</th><th>Pull（fan-out-on-read）</th></tr>
+<tr><td>貴的工發生在</td><td>寫入時</td><td>讀取時</td></tr>
+<tr><td>適合</td><td class="t">普通人（粉絲少）</td><td class="t">名人（粉絲極多）</td></tr>
+<tr><td>讀取成本</td><td>極低（讀 inbox）</td><td>高（現場撈）</td></tr>
+<tr><td>寫入成本</td><td>高（展開所有粉絲）</td><td>極低（只寫自己）</td></tr>
+<tr><td>失敗模式</td><td class="r">名人寫入爆炸</td><td class="r">讀取現場排序爆炸</td></tr>
+</table>
+</section>
+
+<!-- ============ 第四拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">04</span> 第四拍</p>
+<h2>深挖瓶頸（收尾細節）</h2>
+
+<h3>inbox 存哪？→ Redis Sorted Set</h3>
+<p>讀取極頻繁要快、且能從 DB 重算所以掉了不致命 → 放 <strong>Redis（記憶體）</strong>，它是<strong>快取</strong>不是 source of truth。用 Sorted Set，<code>score = 貼文建立時間戳</code>，Redis 自動依時間排序。</p>
+<figure>
+<svg viewBox="0 0 700 270" role="img" aria-label="inbox 用 Redis Sorted Set，member 是 post_id、score 是時間戳，依時間排序；三個操作 ZADD、ZREVRANGE、ZREMRANGEBYRANK">
+<rect x="24" y="44" width="330" height="206" rx="11" fill="#fff" stroke="#d8d4cb"/>
+<text x="40" y="34" font-size="12.5" font-family="var(--mono)" fill="#3c3489">feed:user_B  (Sorted Set)</text>
+<text x="364" y="64" font-size="11" fill="#6b6a64">↑ 最新</text>
+<g font-family="var(--mono)" font-size="12">
+<rect x="40" y="72" width="298" height="30" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="52" y="92" fill="#0f6e56">score 1719500300</text><text x="210" y="92" fill="#23221f">post_987</text>
+<rect x="40" y="108" width="298" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="52" y="128" fill="#0f6e56">score 1719500120</text><text x="210" y="128" fill="#23221f">post_654</text>
+<rect x="40" y="144" width="298" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="52" y="164" fill="#0f6e56">score 1719499880</text><text x="210" y="164" fill="#23221f">post_321</text>
+<rect x="40" y="180" width="298" height="30" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="52" y="200" fill="#0f6e56">score 1719499010</text><text x="210" y="200" fill="#23221f">post_109</text>
+</g>
+<text x="190" y="234" text-anchor="middle" font-size="11" fill="#6b6a64">…依 score（時間）自動排序…  ↓ 最舊</text>
+<g font-size="12">
+<rect x="378" y="72" width="298" height="44" rx="8" fill="#fff" stroke="#1d9e75"/>
+<text x="392" y="90" font-family="var(--mono)" fill="#0f6e56">ZADD feed:user_B ‹ts› ‹post_id›</text>
+<text x="392" y="108" fill="#6b6a64">寫入一則（冪等：member=id、score=時間戳）</text>
+<rect x="378" y="128" width="298" height="44" rx="8" fill="#fff" stroke="#d8d4cb"/>
+<text x="392" y="146" font-family="var(--mono)" fill="#3c3489">ZREVRANGE feed:user_B 0 19</text>
+<text x="392" y="164" fill="#6b6a64">取最新 20 筆</text>
+<rect x="378" y="184" width="298" height="44" rx="8" fill="#fff" stroke="#d8d4cb"/>
+<text x="392" y="202" font-family="var(--mono)" fill="#3c3489">ZREMRANGEBYRANK …0 -1001</text>
+<text x="392" y="220" fill="#6b6a64">只留最新 1000 筆，砍尾巴</text>
+</g>
+</svg>
+<figcaption>原本想存的 <code>created_at</code> 欄位「變成了」score 本身——<b>選對資料結構，讓你不用自己維護順序。</b></figcaption>
+</figure>
+
+<div class="solution callout">
+<span class="tag">收尾決策</span>
+<p><strong>存 id 不存內容</strong>：inbox 只放 post_id，貼文本體另存一份大家共享。否則川普一則文被複製 3000 萬份，儲存爆炸、改一字要改 3000 萬處。</p>
+<p><strong>inbox 長度上限 ≈ 1000</strong>：由「使用者單次合理滑動深度」決定，不是追蹤數。滑穿的人 → 退回 V0 那句查詢打 DB（冷路徑，慢但正確，幾乎不觸發）。</p>
+<p><strong>merge 在 App Server 記憶體</strong>：讀取當下拿兩串已排序資料、線性合併、拼完即丟、不落地。絕不把名人文寫進 inbox（那等於對名人 fan-out，繞回原點）。</p>
+</div>
+
+<h3>寫入路徑非同步化 → Kafka</h3>
+<p>同步寫 5000 個 inbox 會卡死使用者——他不該為了一件他不關心的事（推給粉絲）乾等；而且中途失敗現在沒人補救。兩種期待定義了需求：<strong>發文者要即時回饋、粉絲要最終一定看得到</strong>。</p>
+<figure>
+<svg viewBox="0 0 700 220" role="img" aria-label="Kafka 非同步寫入：App Server 落地即回成功，Kafka 持久化事件，Worker 群冪等寫入 inbox 並重試">
+<rect x="30" y="14" width="120" height="32" rx="7" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="90" y="34" text-anchor="middle" font-size="12" font-weight="600" fill="#0f6e56">① 立刻回「成功」</text>
+<line x1="90" y1="46" x2="90" y2="70" stroke="#1d9e75" stroke-width="1.5" marker-end="url(#arw)"/>
+<rect x="30" y="72" width="120" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="90" y="105" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f">App Server</text>
+<rect x="210" y="72" width="150" height="56" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="285" y="98" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489">Kafka 事件 log</text>
+<text x="285" y="116" text-anchor="middle" font-size="11" fill="#3c3489">持久化 · 掛了不丟</text>
+<rect x="420" y="72" width="140" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="490" y="98" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">Worker 群 ×N</text>
+<text x="490" y="116" text-anchor="middle" font-size="11" fill="#0f6e56">無狀態 · 可擴展</text>
+<rect x="600" y="72" width="76" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="638" y="105" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56">inbox</text>
+<line x1="150" y1="100" x2="208" y2="100" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="360" y1="100" x2="418" y2="100" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="560" y1="100" x2="598" y2="100" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<text x="285" y="152" text-anchor="middle" font-size="11.5" fill="#6b6a64">② 落地即回成功＝責任交棒</text>
+<text x="490" y="152" text-anchor="middle" font-size="11.5" fill="#6b6a64">③ 冪等寫入 ＋ 失敗重試</text>
+</svg>
+<figcaption>「成功」的精確語意是<b>「已被安全收下，且必定會送達」</b>，而不是「已經送達」——這就是非同步系統的承諾邊界。</figcaption>
+</figure>
+<p>三個一定被追的坑：</p>
+<ul>
+<li><strong>承諾邊界</strong>：回「成功」的唯一前提是 <code>posts 表</code> + <code>Kafka</code> 兩個持久化都落地。只要落地，App Server 下一毫秒爆炸也不會丟貼文。</li>
+<li><strong>冪等性（idempotency）</strong>：worker 重試會重寫已寫過的 inbox。靠<strong>穩定的業務鍵</strong>達成冪等：<code>member = post_id</code>、<code>score = 貼文的 created_at</code>（不是寫入當下的時間）。這跟售票防「按兩次付兩次」是同一個性質。</li>
+<li><strong>名人不進 Kafka</strong>：否則川普一發文往 queue 灌 1.1 億任務，壓垮 worker。V2 的粉絲數閾值<strong>一路貫穿到「要不要進 Kafka」</strong>。</li>
+</ul>
+</section>
+
+<!-- ============ 第五拍 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">05</span> 第五拍</p>
+<h2>失敗與取捨</h2>
+<p class="lead">中級的人設計「一切正常時」的系統，資深的人設計「東西壞掉時還能撐住」的系統。</p>
+
+<h3>失敗一 · consumer lag（worker 跟不上）</h3>
+<ul>
+<li><strong>止血</strong>：worker 無狀態 → 水平擴展（50 → 500 個）。Kafka 的 consumer group 原生支援自動重新分配。</li>
+<li><strong>止血的極限</strong>：壓力不消失，只從 worker 移到<strong>下一站 = 有狀態的 Redis</strong>。那才是真正天花板，要提前容量規劃。</li>
+<li><strong>可不可接受</strong>：可容忍的<strong>暫時退化</strong>——因為系統承諾「最終一致」，延遲幾秒不違反任何承諾。同樣的 lag 發生在售票庫存就是致命故障（會超賣）。<strong>差別不在技術，在業務的一致性容忍度。</strong></li>
+</ul>
+
+<h3>失敗二 · Redis 整個掛掉</h3>
+<p><strong>定性</strong>：inbox 是<strong>快取</strong>（能從 posts + follows 重算）→ Redis 掛是<strong>效能災難</strong>，不是資料災難。重建來源不是 Kafka（它有保留期、存「事件」不是「狀態」），而是<strong>重跑 V0 那句查詢</strong>——笨方法第三次回來救場。</p>
+<figure>
+<svg viewBox="0 0 700 150" role="img" aria-label="cache stampede：Redis 全掛，幾億人退冷路徑同時砸 Postgres，DB 被打垮，全站掛">
+<rect x="20" y="50" width="130" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="85" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a">Redis 全掛</text>
+<text x="85" y="96" text-anchor="middle" font-size="11" fill="#a8341a">幾億 inbox 消失</text>
+<rect x="195" y="50" width="150" height="58" rx="10" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="270" y="78" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f">幾億人退冷路徑</text>
+<text x="270" y="96" text-anchor="middle" font-size="11" fill="#6b6a64">同時打 DB</text>
+<rect x="390" y="50" width="160" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="470" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a">580K QPS 砸 Postgres</text>
+<text x="470" y="96" text-anchor="middle" font-size="11" fill="#a8341a">全是最貴的查詢</text>
+<rect x="595" y="50" width="90" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="640" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a">DB 垮</text>
+<text x="640" y="96" text-anchor="middle" font-size="11" fill="#a8341a">全站掛</text>
+<line x1="150" y1="79" x2="193" y2="79" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="345" y1="79" x2="388" y2="79" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="550" y1="79" x2="593" y2="79" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<text x="350" y="135" text-anchor="middle" font-size="12" fill="#6b6a64">cache stampede：效能災難因沒處理中間態，雪崩成全站災難</text>
+</svg>
+<figcaption>結論「能重建」是對的，但<b>重建過程本身必須被保護</b>：DB 前限流／降級、同一 inbox 只放第一個請求打 DB、Redis 做叢集把「全掛」降級成「掉一部分」。</figcaption>
+</figure>
+<table class="tbl">
+<tr><th></th><th>RPO（可容忍遺失多少資料）</th><th>RTO（可容忍癱瘓多久）</th></tr>
+<tr><td>inbox（快取）</td><td>寬鬆（可重算，無資料遺失）</td><td class="t">重這個</td></tr>
+<tr><td>Postgres（真相來源）</td><td class="r">必須嚴格（貼文一則不能丟）</td><td>次要</td></tr>
+</table>
+
+<h3>失敗三 · hot key 三次現身</h3>
+<p>那個「全體粉絲共享一份」的名人快取，本身就是一個 hot key——同一個 key 永遠雜湊到同一個分片節點，分片解不了。</p>
+<div class="bottleneck callout">
+<span class="tag">錯誤直覺</span>
+<p>用 Kafka 當讀取緩衝。❌ <strong>Kafka 是給「寫入／任務」削峰的，不是給「讀取」加速的。</strong>讀取必須即時，丟進 queue＝讓讀取延遲變無限長。讀取熱點永遠往「快取／複製／推到離使用者更近」想，不是「排隊」。</p>
+</div>
+<p><strong>正解</strong>：① 唯讀副本（replica）＋ load balancer 打散；② <strong>本地快取（local cache）</strong>——爆紅貼文這幾分鐘內容不變，讓每台 App Server 本機記憶體快取幾秒，1 億次讀取被幾百台機器吸收掉絕大部分；③ key 加隨機後綴打散到多節點再聚合。</p>
+<figure>
+<svg viewBox="0 0 700 200" role="img" aria-label="hot key 在寫入、worker、讀取三個面向各咬一口，是同一隻怪">
+<text x="125" y="28" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a">① 寫入爆炸</text>
+<text x="350" y="28" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a">② worker 爆炸</text>
+<text x="575" y="28" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a">③ 讀取爆炸</text>
+<rect x="65" y="44" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="125" y="69" text-anchor="middle" font-size="12.5" fill="#23221f">名人發文</text>
+<rect x="290" y="44" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="350" y="69" text-anchor="middle" font-size="12.5" fill="#23221f">名人發文</text>
+<rect x="515" y="44" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="575" y="69" text-anchor="middle" font-size="12.5" fill="#23221f">爆紅貼文</text>
+<line x1="125" y1="84" x2="125" y2="104" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="350" y1="84" x2="350" y2="104" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<line x1="575" y1="84" x2="575" y2="104" stroke="#d85a30" stroke-width="1.5" marker-end="url(#arw)"/>
+<rect x="55" y="106" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="125" y="133" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a">寫 3000 萬 inbox</text>
+<rect x="280" y="106" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="350" y="133" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a">灌 1.1 億 任務</text>
+<rect x="505" y="106" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="575" y="133" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a">1 億次砸單節點</text>
+<text x="350" y="182" text-anchor="middle" font-size="12.5" fill="#6b6a64">同一隻怪：極少數超熱實體拖垮整條路徑。售票的招式可直接搬過來。</text>
+</svg>
+<figcaption>認得出「<b>啊，這又是 hot key</b>」的那一刻，你就不再是背題，而是真的會設計系統了。</figcaption>
+</figure>
+</section>
+
+<!-- ============ 完整架構 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">∑</span> 收束</p>
+<h2>完整架構一圖</h2>
+<figure>
+<svg viewBox="0 0 700 420" role="img" aria-label="完整架構：寫入路徑依粉絲數分流到 Kafka-Worker-inbox 或名人快取；讀取路徑合併兩來源；底層 Postgres 為真相來源">
+<rect x="20" y="46" width="320" height="296" rx="14" fill="#fff" stroke="#d8d4cb"/>
+<text x="36" y="38" font-size="12.5" font-weight="700" fill="#6b6a64">寫入路徑</text>
+<rect x="120" y="62" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="180" y="87" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f">發文</text>
+<rect x="100" y="120" width="160" height="42" rx="8" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="180" y="146" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489">粉絲數路由</text>
+<line x1="180" y1="102" x2="180" y2="118" stroke="#8a887f" stroke-width="1.5" marker-end="url(#arw)"/>
+<text x="95" y="196" font-size="11" font-weight="700" fill="#6b6a64">普通人</text>
+<rect x="40" y="202" width="150" height="34" rx="7" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="115" y="224" text-anchor="middle" font-size="12.5" fill="#3c3489">Kafka 事件 log</text>
+<rect x="40" y="244" width="150" height="34" rx="7" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="115" y="266" text-anchor="middle" font-size="12.5" fill="#0f6e56">Worker ×N</text>
+<rect x="40" y="286" width="150" height="38" rx="7" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="115" y="304" text-anchor="middle" font-size="12" fill="#0f6e56">Redis：inbox</text>
+<text x="115" y="318" text-anchor="middle" font-size="10.5" fill="#0f6e56">Sorted Set</text>
+<line x1="115" y1="236" x2="115" y2="243" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<line x1="115" y1="278" x2="115" y2="285" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<line x1="155" y1="162" x2="120" y2="200" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<text x="290" y="196" font-size="11" font-weight="700" fill="#854f0b">名人</text>
+<rect x="210" y="202" width="116" height="74" rx="7" fill="#faeeda" stroke="#ba7517"/>
+<text x="268" y="232" text-anchor="middle" font-size="12" fill="#854f0b">Redis：名人</text>
+<text x="268" y="248" text-anchor="middle" font-size="12" fill="#854f0b">共享快取</text>
+<text x="268" y="265" text-anchor="middle" font-size="10.5" fill="#854f0b">不進 Kafka</text>
+<line x1="205" y1="160" x2="262" y2="200" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<rect x="360" y="46" width="320" height="296" rx="14" fill="#fff" stroke="#d8d4cb"/>
+<text x="376" y="38" font-size="12.5" font-weight="700" fill="#6b6a64">讀取路徑</text>
+<rect x="380" y="90" width="150" height="42" rx="8" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="455" y="116" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56">讀 inbox</text>
+<rect x="380" y="150" width="150" height="42" rx="8" fill="#faeeda" stroke="#ba7517"/>
+<text x="455" y="176" text-anchor="middle" font-size="12.5" font-weight="600" fill="#854f0b">pull 名人快取</text>
+<rect x="558" y="120" width="104" height="50" rx="8" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="610" y="142" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3c3489">記憶體</text>
+<text x="610" y="159" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3c3489">merge</text>
+<line x1="530" y1="111" x2="556" y2="135" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<line x1="530" y1="171" x2="556" y2="155" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<rect x="430" y="250" width="200" height="44" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="530" y="277" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f">前 20 筆 → 前端</text>
+<line x1="610" y1="170" x2="610" y2="252" stroke="#8a887f" stroke-width="1.4" marker-end="url(#arw)"/>
+<line x1="610" y1="252" x2="610" y2="272" stroke="#8a887f" stroke-width="0" />
+<rect x="20" y="360" width="660" height="44" rx="10" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="350" y="387" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23221f">真相來源：Postgres（posts / follows）｜快取掉了由此重算（冷路徑）</text>
+</svg>
+<figcaption>寫入依粉絲數分流，讀取把兩來源在記憶體合併。<b>全程不碰 V0 跨表查詢，DB 只在 cache miss／災難復原的冷路徑才出場。</b></figcaption>
+</figure>
+<div class="summary">
+<span class="tag">一句話回顧</span>
+發文 → App Server 寫 posts + 看粉絲數分流。普通人 fan-out 事件進 Kafka → worker 冪等寫進每個 inbox（Sorted Set，post_id 當 member、時間戳當 score）。名人只更新自己的共享快取、不展開。讀取時 App Server 並行讀〔自己的 inbox〕＋〔追蹤名人的共享快取〕，記憶體 merge 取最新 20 筆，再用 id 補貼文內容。
+</div>
+</section>
+
+<!-- ============ 個人提醒 ============ -->
+<section>
+<p class="sec-eyebrow"><span class="num">✎</span> 給自己</p>
+<h2>個人複習提醒</h2>
+<div class="insight callout">
+<span class="tag">已內化</span>
+<p>會自己接話、自己算規模、自己指認 hot key，甚至會停下來質疑「我是不是在迎合名詞」。這個自我懷疑＝瓶頸驅動內化的徵兆。</p>
+</div>
+<div class="bottleneck callout">
+<span class="tag">待加強</span>
+<p>回答先收束到「這一坑的<strong>核心性質</strong>是什麼」，再展開講<strong>手段</strong>。Redis 那題該先點「inbox 是 cache → 效能災難」，再講重建；冪等那題該先說「我要的是冪等性」，再講 Sorted Set。<strong>先講性質、再講手段</strong>——回答會從「會解」升級成「讓人信服你懂為什麼」。</p>
+</div>
+</section>
+
+<footer>
+動態消息系統設計 · 圖文複習筆記　|　五拍框架 · 瓶頸驅動 · 認模式　|　顏色：<span style="color:var(--red)">瓶頸</span> · <span style="color:var(--teal)">解法</span> · <span style="color:var(--amber)">名人路徑</span> · <span style="color:var(--indigo)">關鍵節點</span>
+</footer>
+
+</div>
+</body>
+</html>

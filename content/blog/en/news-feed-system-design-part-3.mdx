@@ -1,0 +1,203 @@
+---
+title: "Things Show Their True Colours When They Break: Workers That Fall Behind, a Cache Avalanche, and the Hot Key's Third Appearance"
+date: "2026-06-30"
+description: "What truly tests a system in engineering isn't when everything is fine — it's when things start to break. This piece breaks things on purpose: what to do when background workers fall behind, why the Redis holding hundreds of millions of inboxes going down triggers an avalanche, and how the monster called hot key appears a third time. Only after walking through all of this is the design truly complete."
+tags: ["System Design", "System Architecture", "Distributed Systems", "Redis", "Cache", "High Availability", "Engineering Thinking"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 3
+---
+
+> This is the final part of the "Designing a News Feed System" series. Previously: [Part 1](/en/blog/news-feed-system-design-part-1) derived, from a crashing SQL query, the "push for regulars, pull for celebrities" hybrid; [Part 2](/en/blog/news-feed-system-design-part-2) added the inbox (Redis Sorted Set), used Kafka to push delivery to the background, and made "success" precise. This part, we break things on purpose.
+
+## A mindset I learned far too late
+
+I used to think a design was done once it "ran." Draw the flow, data goes in and out, the user gets what they want — done, ship it.
+
+Later I slowly realised that's only half the design. The other half — often harder, and far more revealing of skill — is this:
+
+> **Mid-level engineers design the system for "when everything is fine"; senior engineers design it for "still holding when things break."**
+
+In any sufficiently large system, parts breaking isn't a question of "whether" but "when, and which one first." Machines crash, networks drop, traffic suddenly spikes. A mature design doesn't pretend these won't happen — it works out in advance "when it happens, how does the system degrade gracefully instead of crashing in the user's face."
+
+So this final part adds no new features. We take the system we built in the last two parts and knock on each part, one by one, to see where it hurts and what to do.
+
+Quick recap of the system in hand: user posts → route by follower count. Regulars drop a delivery ticket on Kafka, reply "success" instantly, background workers deliver the post into each follower's inbox (a Redis Sorted Set); celebrities don't deliver, just update their own post. At feed time, merge the inbox and celebrities' posts.
+
+Alright, let's break things.
+
+## Break #1: the background workers fall behind
+
+Knock on the belt at the front first.
+
+Imagine New Year's Eve midnight: the whole world posts greetings at once, post volume surging to 20× normal. Our background delivery workers grab tickets and deliver as fast as they can, but **tickets pour in far faster than workers process them**. So tickets pile on the belt, the to-deliver queue stretches longer and longer.
+
+This "to-do list keeps piling up" phenomenon has a name: **consumer lag**. The consequence: a post takes longer to actually appear in followers' inboxes.
+
+What to do? The instinct: **hire more workers.** Go from 50 to 500, grabbing tickets together, and catch up on the backlog.
+
+This works because our workers are **"stateless."** That word sounds abstract; plainly, **workers don't need to remember anything.** Each ticket is independent and complete; a worker grabs one, follows it, forgets it, and the next has nothing to do with the last. Precisely because workers don't coordinate or share memory can you toss in more anytime and they start working immediately. **Stateless = you can add clones freely.**
+
+<svg viewBox="0 0 720 230" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Workers fall behind: a post surge piles Kafka tickets; adding workers stops the bleeding, but pressure moves to the stateful Redis, the real ceiling">
+<defs><marker id="c1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="230" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="30" y="80" width="120" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="90" y="105" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">post surge</text>
+<text x="90" y="123" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">×20</text>
+<rect x="190" y="80" width="150" height="56" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="265" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489" font-family="sans-serif">Kafka: tickets pile</text>
+<text x="265" y="123" text-anchor="middle" font-size="11" fill="#3c3489" font-family="sans-serif">queue grows longer</text>
+<rect x="380" y="80" width="140" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="450" y="105" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">workers ×N</text>
+<text x="450" y="123" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">stateless → addable</text>
+<rect x="560" y="80" width="130" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="625" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">Redis (stateful)</text>
+<text x="625" y="123" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">the real ceiling</text>
+<line x1="150" y1="108" x2="188" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<line x1="340" y1="108" x2="378" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<line x1="520" y1="108" x2="558" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<text x="360" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">Adding workers stops the bleeding, but pressure just "moves" to the next stop</text>
+<text x="360" y="178" text-anchor="middle" font-size="12" fill="#6b6a64" font-family="sans-serif">workers relieved, pressure flows to the final stateful link you can't just clone</text>
+</svg>
+
+*Figure: the stop-the-bleeding move (add workers) has a limit — the bottleneck moves to the next weakest link.*
+
+But here's a deeper insight that separates "can solve" from "thinks far enough": **adding workers isn't infinitely effective.** Add many workers and the pressure doesn't vanish — it just **moves** from "workers" to the next stop, the place workers ultimately write to: **Redis**.
+
+And Redis, unlike workers, is **"stateful."** It must "remember" hundreds of millions of inboxes. You can't just spin up a Redis clone like adding a worker — a new clone is empty; it doesn't know where those inboxes are or who owns what, and you'd have to deal with "how to shard the data, which machine owns whom." **Stateful things are far costlier to scale.** That's why it's the real ceiling of this path, the place to do capacity planning ahead of time.
+
+> Here's a cross-system rule: **stateless things scale, stateful things hold the line.** You can always toss in more stateless workers, but all pressure ultimately converges on that stateful storage layer. Next time you see "a row of stateless things in front of one stateful thing," you know the real bottleneck is the one behind. I worked through this very line once in WebRTC too — see [scaling a stateful SFU](/en/blog/scaling-stateful-sfu-with-room-affinity).
+
+So is consumer lag a serious failure? The answer is interesting: **in this system, it's only a tolerable temporary degradation, not a failure.** Why? Because from Part 1 we set "new posts only need to be eventually visible; a few seconds late is fine." Workers being slow, posts entering inboxes a few seconds late — this violates none of the system's commitments.
+
+Contrast it to get the essence of the judgement: the same "processing delay," if it happened to the **inventory decrement of a ticketing system**, would be a fatal failure — because there the commitment is "never oversell," and delay directly causes selling tickets that don't exist. The same technical phenomenon: in one system you shrug, in another it kills you. **The difference isn't technical; it's the system's tolerance for "consistency."** This is also why in Part 1 I stressed asking up front "can the user tolerate delay" — right here at the end, it directly decides which failures are disasters and which you can briefly endure.
+
+## Break #2: the Redis holding hundreds of millions of inboxes goes down
+
+Done with the belt; knock on the Redis we just called the "ceiling." Suppose the Redis cluster holding hundreds of millions of inboxes — a shard, or the whole thing — goes down.
+
+What happens? A user opens the app to read their inbox, but it's gone — they see a blank.
+
+Sounds terrifying, but classify it calmly first. Remember Part 2's ruler: **what happens if this data is lost?** The inbox is **recomputable** (re-deliver from "who they follow, what those people recently posted"), so Redis going down is a **performance disaster, not a data disaster** — no post is permanently lost; the real post bodies sit safely in the database.
+
+And you notice something fun: rebuilding the inbox relies precisely on Part 1's earliest-dismissed, discarded V0 dumb method (that cross-table fetch query). In Part 2 it was the "fallback for scrolling past 1,000 items"; now it's the "source for rebuilding the inbox during a disaster." **The same dumb method, back to the rescue a third time.** An early dumb design is rarely actually wrong — it just shouldn't sit on the hot path — but it's almost always your last fuse.
+
+But — here's a trap that genuinely kills you a second time, and the interviewer's favourite spot. You can't stop at "it can be rebuilt," because **the instant of rebuilding** is the most dangerous:
+
+The moment Redis goes down, hundreds of millions of inboxes vanish **at once**. The next second, these hundreds of millions open the app, all fail to read the inbox, and so **all fall back to hitting the database at once** — and every hit is that most expensive cross-table query we spent three whole parts dodging. The database, which was comfortably shielded by the cache, suddenly has to absorb hundreds of thousands of the priciest queries per second — it was never designed for this (which is exactly why we introduced the cache). So the database is crushed too. Once it falls, even the source of truth is paralysed, and **the whole site goes down**.
+
+<svg viewBox="0 0 720 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cache avalanche: Redis fully down, hundreds of millions fall back to the DB running the most expensive query, the DB is crushed, the whole site goes down">
+<defs><marker id="c2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#d85a30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="170" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="24" y="56" width="128" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="88" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">Redis fully down</text>
+<text x="88" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">millions of inboxes gone</text>
+<rect x="192" y="56" width="148" height="60" rx="10" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="266" y="83" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">millions at once</text>
+<text x="266" y="101" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">fall back to the DB</text>
+<rect x="380" y="56" width="160" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="460" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">priciest query floods it</text>
+<text x="460" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">DB can't hold</text>
+<rect x="580" y="56" width="116" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="638" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">DB collapses</text>
+<text x="638" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">whole site down</text>
+<line x1="152" y1="86" x2="190" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<line x1="340" y1="86" x2="378" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<line x1="540" y1="86" x2="578" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<text x="360" y="145" text-anchor="middle" font-size="12" fill="#6b6a64" font-family="sans-serif">a "performance disaster" avalanches into a "site-wide disaster" for mishandling the in-between</text>
+</svg>
+
+*Figure: a cache stampede — once the cache drops, the exposed traffic instantly washes over the database behind it.*
+
+This chain reaction is called a **cache stampede**. Picture it: normally everyone uses that wide automatic door (Redis); suddenly the door breaks, and everyone rushes the single-file side door (the database), which is instantly crushed.
+
+So "it can be rebuilt" is correct, but **the rebuild process itself must be protected** — you can't let hundreds of millions run naked at the database at once. Common mitigations go in three directions (just remember the ideas):
+
+- **Rate-limit / degrade**: put a layer in front of the database, letting only limited traffic in to recompute, and reply "loading" or serve stale data to the rest. Rather make the user slow than let the database fall — protecting the source of truth is the top priority.
+- **Share the recompute result**: for one person's inbox, allow only "the first request" to actually hit the database to rebuild; others arriving at the same time wait and share that result, rather than each hitting the database separately.
+- **Don't let it all die together**: make Redis a multi-replica cluster so it doesn't "all go down at once" — turn "fully down" into "lose a part," and the remaining replicas hold on, buying you rebuild time.
+
+## Aside: two metrics for "how much disaster you can endure"
+
+Speaking of disaster recovery, let me make two practical, exam-favourite metrics plain: **RPO** and **RTO**:
+
+- **RPO** (Recovery Point Objective): **how much data you can tolerate losing**, measured in time. RPO = 5 minutes means worst-case you accept losing the "last 5 minutes" of data. It decides **how often you back up / sync** — sync interval ≈ worst-case loss.
+- **RTO** (Recovery Time Objective): **how long you can tolerate the system being down**, the ceiling from crash to restored service. It decides how much you invest in fast recovery (hot standby, automatic failover all exist to push this number down).
+
+Apply it to our system and you see something crucial — **within one system, different parts have wildly different requirements:**
+
+| Part | RPO (tolerable data loss) | RTO (tolerable downtime) |
+|---|---|---|
+| Inbox (cache) | Loose — recomputable, no "data loss" problem | **This one matters** (how fast to restore service) |
+| Database (source of truth) | **Must be strict** — not one post can be lost | Secondary |
+
+The basis is again that old ruler: **is this data a "source of truth" or a "recomputable cache"?** Truth — spend to keep RPO tight (strict backups, never lose); cache — mainly care about RTO (loss is fine, just recover fast).
+
+## Break #3: the monster comes a third time
+
+The last breaking point, back to our proudest design — the celebrity's "shared cache" (all followers read one shared copy of celebrity posts, no copying). It is itself a **hot key**.
+
+Imagine a celebrity's post goes viral, and that shared cache is frantically read by a hundred million people in minutes. The problem: **the same data (the same key), no matter how many shards you split the Redis cluster into, only ever lands on "one" machine.** So those hundred million reads all slam **that one** Redis, crushing it, while the rest of the cluster sits idle.
+
+This time you can't solve it with "sharding," because the root cause is precisely "**a single key can't be split.**"
+
+Here I once made a mistake worth airing, because it cleanly draws an important line. My first thought was: "use Kafka's belt as a buffer — a hundred million want to read, no problem, queue and serve slowly."
+
+**Wrong.** Kafka's "queue and process slowly" trick is for **writes / background tasks** — because the poster can drop the ticket and leave, not caring to wait. But **reads can't queue**: the user opening the app now wants to see the post **now, immediately**; you can't tell them "your read request has entered the queue, ETA 30 seconds" — they've already closed the app.
+
+> Remember this line; it saves you many mistakes: **Kafka solves "too many writes, can be deferred"; it can't solve "reads too hot, must be instant."** The fix for a read hotspot is always toward "replicate, cache, push the data closer to the user," never "queue."
+
+So how to correctly solve a read hotspot? Since a single key crushes a single machine, **replicate that key into many copies** and spread the hundred million reads:
+
+- **Read replicas**: make several read-only clones of that hot machine, spreading read traffic across them.
+- **Local cache**: this one is fiercer and cleverer. A viral post's **content doesn't change** in these minutes, so why should every app server keep going back to Redis for the same unchanging thing? Let **each app server keep this post in its own memory for a few seconds**. In those seconds, all users that machine serves don't touch Redis at all — straight from local memory. A hundred million reads get absorbed mostly by a few hundred app servers' local memory, and traffic actually hitting Redis drops by orders of magnitude. The cost is only "data may be a few seconds stale" — for a viral post, a few seconds stale matters not at all. Once again, **trade a little consistency for enormous scale.**
+
+<svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The hot key takes a bite in three places — writes, workers, reads — the same monster in three skins">
+<defs><marker id="c3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#d85a30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="210" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="130" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">① Write explosion</text>
+<text x="360" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">② Worker explosion</text>
+<text x="590" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">③ Read explosion</text>
+<rect x="70" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="130" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">celeb posts</text>
+<rect x="300" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="360" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">celeb posts</text>
+<rect x="530" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="590" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">viral post</text>
+<line x1="130" y1="92" x2="130" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<line x1="360" y1="92" x2="360" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<line x1="590" y1="92" x2="590" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<rect x="60" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="130" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">deliver to 30M inboxes</text>
+<rect x="290" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="360" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">flood the workers</text>
+<rect x="520" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="590" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">crush a single machine</text>
+<text x="360" y="188" text-anchor="middle" font-size="12.5" fill="#6b6a64" font-family="sans-serif">Same monster: a tiny number of super-hot things drag down the whole path</text>
+</svg>
+
+*Figure: the hot key appears three times in this system — writes, background workers, reads — taking a bite from each.*
+
+Now go back and count: this monster called **hot key** appeared **three times** in this system:
+
+- Part 1, a celebrity post must deliver to tens of millions of inboxes, blowing up **writes**.
+- Part 2, a celebrity going through background delivery would flood the **workers**.
+- This part, a celebrity's shared cache read viral blows up **reads**.
+
+The same essence — "a tiny number of super-hot things drag down the whole path" — bites you across writes, tasks, and reads. And the moves against it (isolate, replicate, local cache, spread the key) are the same set. **This is what I most wanted this whole series to convey: what you should learn isn't "the news feed's solution," but a set of underlying patterns that recur in countless scenarios.** The moment you recognise "ah, this is a hot key again," you stop memorising problems and actually start designing systems.
+
+## Three parts done — what did we actually learn
+
+From one of the most intuitive yet collapsing SQL queries, we walked step by step to a design that holds up at scale, doesn't block the user, and degrades gracefully even when broken. But if you ask what to take from these three parts, it's absolutely not that final architecture diagram. It's this rhythm of thinking:
+
+> **Build a dumb version that works but breaks → find the first place it can't hold → add one layer, against that bottleneck only → then turn around and ask: what happens when this layer breaks?**
+
+No step in this rhythm is "memorised"; each has a concrete reason forcing it. And it transfers across domains — it's the same thing as my video-system arc from [1:1 all the way up to an SFU](/en/blog/webrtc-poc-1-signaling-presence). Swap in a URL shortener, chat, or collaborative editing, and the skeleton is identical.
+
+A final, personal reflection. After finishing this whole problem, my three biggest takeaways: one, "find the bottleneck, then add things" slowly turned from "needs reminding" into a reflex; two, I began to see the same pattern across different problems (like that thrice-appearing hot key); three — still practising this — when answering, first converge on "what's the **essence** of this thing," then unfold the **means**. Like the Redis-down question: say clearly "the inbox is a cache, so this is a performance disaster" first, then explain the rebuild; essence first, means second, and the whole reasoning gets much clearer.
+
+If this "don't memorise the architecture, derive it step by step" series helped you, then its purpose is fulfilled. I'll keep using the same method to take apart other systems — see you next time.
+
+---
+
+*The "Designing a News Feed System" series is complete. If you came in here, I'd start from [Part 1](/en/blog/news-feed-system-design-part-1) — the whole derivation feels better in order.*

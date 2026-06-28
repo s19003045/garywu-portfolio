@@ -1,0 +1,293 @@
+---
+title: "Starting from One SQL Query: The Hard Part of a News Feed Isn't Listing the Posts"
+date: "2026-06-28"
+description: "Designing a home timeline like Threads or Instagram, the first instinct is usually 'pull the posts from people you follow and sort them by time.' This piece starts from that most natural SQL query, watches why it collapses at scale, then derives fan-out and the celebrity hybrid step by step — the point isn't the final architecture, but why each step has no other choice."
+tags: ["System Design", "System Architecture", "Distributed Systems", "Engineering Thinking", "Learning"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 1
+---
+
+> This is the first main part of the "Designing a News Feed System" series (there's also a short [primer](/en/blog/news-feed-system-design-part-0) on the method). This series isn't about memorising one final architecture diagram — it's about **deriving it by hand**, where every component you add must be forced in by a concrete bottleneck. It's the same line of thinking as my WebRTC arc from Mesh to SFU: find where the previous version can't hold, then decide the next step.
+>
+> Also, honestly: this is a **design exercise**, not a Twitter I actually built. It's closer to an interview whiteboard, or one person reasoning on paper. I lay out every step of the derivation, because the value — for me and for you — was never the answer, but how we get there.
+
+## I started by asking the wrong question
+
+While practising system design, I made a very typical mistake.
+
+The prompt was: "Design a news feed where a user opens the app and sees the latest posts from people they follow." The moment I heard it, I started firing off questions — how many posts load at once? How far down before the next batch loads? Should images resize to the screen? Should comments load with the post, or just a count first?
+
+None of these is wrong. But they share one thing: **they're all "what the screen looks like" details, and not one of them changes the underlying shape of the system.**
+
+Later I gradually caught hold of a ruler, one I now reach for first on every problem:
+
+> **Whether a question is worth asking first depends on whether it "changes the architecture."** 20 vs 50 items per page is the same backend API — it won't fork into two designs. But "how many users," "how many people each follows on average," "how many times more reads than writes" — different answers, and the whole system grows into a completely different shape.
+
+So the first takeaway of this piece, before you've looked at any architecture diagram: **to design a system, look at the macro numbers first, the screen-level details second.** As you'll see, just the single fact that "reads vastly outnumber writes" decides everything that follows.
+
+## Let's put the problem in plain words
+
+If "news feed" isn't a familiar term, it's just the thing you use every day:
+
+Open Threads, Instagram, Twitter / X, and the first "home" thing you see — a pile of posts from people you follow, mixed together, roughly sorted newest to oldest. The proper name is the **home timeline**, or the **news feed**.
+
+Sounds simple, right? "Just pull the posts from people I follow and sort them." True — if it's only you and your 50 friends, it really is simple. What makes it hard is **scale**.
+
+## Scale: the real protagonist
+
+I set this exercise at the scale of a large platform (round numbers, easy mental math):
+
+- Registered users: **500 million**
+- Daily actives (people who actually open it): **200 million**
+- Average accounts each person follows: **200**
+- Total posts per day: about **500 million**
+- And — **reads outnumber writes (posting) by roughly 100×**
+
+That last line is the key to the whole piece. Let's work it out.
+
+"Posting," 500 million times a day, averaged per second, is about **5,800 / second**.
+"Opening to look," 100× posting, is about **580,000 / second**.
+
+(This "divide the daily total by seconds in a day and grab a rough number" estimation is what engineers call back-of-the-envelope. It doesn't need to be precise; just get the order of magnitude right.)
+
+Hold onto this contrast: **looking (reads), 580K/s; posting (writes), under 6K/s. Reads are 100× writes.** In a moment you'll see that the entire design pivots around this 100×.
+
+## V0: do it by instinct — what happens?
+
+Let's build the dumbest, most intuitive version first. In system design, building a "works but breaks" version first is a good habit — it shows you the bottleneck firsthand, so you know what to fix next. I call this V0.
+
+Store the data in three tables first (think of a table as a tab in a spreadsheet, each row a record):
+
+- **Users table**: each person's id, name, avatar.
+- **Follows table**: one row per relationship, "A follows B."
+- **Posts table**: each post's id, content, author, time.
+
+Now a user opens the app and we assemble their home feed. The intuitive approach: look up the 200 people they follow in the follows table, pull those 200 people's posts from the posts table, sort by time, take the latest 20. As a database query, roughly:
+
+```sql
+-- The query that runs when "user U opens the home feed"
+SELECT p.* FROM posts p
+WHERE p.user_id IN (
+    SELECT following_id FROM follows WHERE follower_id = U
+)
+ORDER BY p.created_at DESC
+LIMIT 20;
+```
+
+Even if you can't read SQL, here's what it does in plain words:
+
+1. Find the 200 people U follows.
+2. Pull **all the recent posts** from those 200 people.
+3. Mix them together, **sort newest to oldest**.
+4. Take only the front 20 for the user, **discard the rest**.
+
+<svg viewBox="0 0 720 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V0 flow: the user opens the app, the app server hands the work to the database, and the database runs one expensive cross-table sort query">
+<defs><marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="250" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="46" width="130" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="105" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">Your app</text>
+<text x="105" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">open feed</text>
+<rect x="240" y="46" width="150" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="315" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">App server</text>
+<text x="315" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">barely does anything</text>
+<rect x="470" y="46" width="210" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="575" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">Database</text>
+<text x="575" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">users / follows / posts</text>
+<line x1="170" y1="74" x2="238" y2="74" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a1)"/>
+<line x1="390" y1="74" x2="468" y2="74" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a1)"/>
+<line x1="560" y1="102" x2="470" y2="142" stroke="#d85a30" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a1)"/>
+<rect x="240" y="142" width="440" height="82" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="260" y="168" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">Bottleneck: to get the latest 20…</text>
+<text x="260" y="190" font-size="12.5" fill="#a8341a" font-family="sans-serif">the DB must first pull ALL recent posts from 200 people, sort, then drop the rest</text>
+<text x="260" y="210" font-size="12.5" fill="#a8341a" font-family="sans-serif">and it reruns from scratch on every single open</text>
+</svg>
+
+*Figure: V0 hands all the work to the database, assembling the feed live "at read time."*
+
+This version works. The problem is it breaks somewhere — and where it breaks isn't what most people's first instinct says.
+
+Many would say: "Too many requests, obviously — 580K a second, of course the DB can't take it." Half right, but not precise. The real pain isn't "the number of requests"; it's that **"each individual request is, in itself, expensive."**
+
+Expensive where? Look at steps 2 and 3 above: to give you the latest 20, the database must first pull **all** of those 200 people's recent posts, sort all of them, then throw the extras away. You wanted 20, but it had to touch hundreds or thousands. It's like wanting only the three tallest in a class, yet having to line up all 40 to pick them — you want 3, you moved 40.
+
+Now multiply that expensive thing by 580K/s. **Every person opening the app forces the database, "at the instant of opening," to run that big pull-and-sort live.** The database is quickly crushed by these repeated, expensive live computations.
+
+Here's the keyword, remember it: the problem is **timing**. This expensive computation happens "at read time" — exactly when the user is least patient, and exactly the most frequent moment (580K/s).
+
+## The key flip: move the expensive work from "read" to "write"
+
+The location is hard to change (data has to live in some database), but **the timing can change**. That's the pivot of the whole problem.
+
+Look at those two numbers again: reads 580K/s, writes under 6K/s, 100× apart. Now ask:
+
+> When the same person refreshes the feed twice in a row, the content is usually almost unchanged. Yet we recompute from zero every time. So… could that expensive sort happen not "at read time," but be done ahead of time "at write time"?
+
+If it can, we've moved an expensive computation from a point that fires 580K times a second to one that fires only 6K times a second. **Compute once, store it, and the next 100 reads just grab the ready-made result.**
+
+<svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The core flip: reads are 580K/s and expensive, writes under 6K/s, so move the expensive work to the write side and do it once">
+<defs><marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#1d9e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="200" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="45" width="250" height="112" rx="11" fill="#f8eae5" stroke="#d85a30"/>
+<text x="165" y="90" text-anchor="middle" font-size="26" font-weight="800" fill="#a8341a" font-family="sans-serif">580,000 / s</text>
+<text x="165" y="116" text-anchor="middle" font-size="13" fill="#a8341a" font-family="sans-serif">Reads: the expensive sort lives here</text>
+<text x="165" y="138" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">recomputed 580K times a second</text>
+<rect x="470" y="62" width="210" height="78" rx="11" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="575" y="98" text-anchor="middle" font-size="22" font-weight="800" fill="#0f6e56" font-family="sans-serif">5,800 / s</text>
+<text x="575" y="122" text-anchor="middle" font-size="13" fill="#0f6e56" font-family="sans-serif">Writes: move it here, done once</text>
+<line x1="290" y1="101" x2="468" y2="101" stroke="#1d9e75" stroke-width="2" marker-end="url(#a2)"/>
+<text x="379" y="90" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f6e56" font-family="sans-serif">move the expensive work over</text>
+<text x="379" y="120" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">100× apart</text>
+</svg>
+
+*Figure: the soul of the whole problem — move the expensive work from the 580K/s "read" to the 6K/s "write."*
+
+This idea is the heart of the design that follows. It has a name: **fan-out-on-write**. Next, let's make it concrete.
+
+## V1: at post time, "deliver" the post into every follower's inbox
+
+Let me explain the design with an everyday metaphor: **mailbox delivery**.
+
+Imagine every user has their own personal **inbox**. Now change the rules:
+
+- **At post time (write)**: A makes a post; the system doesn't just store it — it **immediately looks up all of A's followers and delivers the post into each follower's inbox.**
+- **At feed time (read)**: B opens the app and computes nothing — **just grabs their own inbox**, which is already a stack of delivered, sorted posts.
+
+<svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V1 push: at post time deliver the post into each follower's inbox; at read time just grab your own inbox; but a celebrity with 30M followers overflows it">
+<defs><marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="300" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="40" y="32" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">① On write (A makes a post)</text>
+<rect x="40" y="44" width="110" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="95" y="73" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">A posts</text>
+<rect x="180" y="44" width="130" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="245" y="73" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">find A's followers</text>
+<rect x="340" y="44" width="160" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="420" y="66" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">deliver to each inbox</text>
+<text x="420" y="83" text-anchor="middle" font-size="10.5" fill="#0f6e56" font-family="sans-serif">fan-out</text>
+<line x1="150" y1="68" x2="178" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<line x1="310" y1="68" x2="338" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="540" y="40" width="74" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="577" y="57" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">inbox</text>
+<rect x="540" y="70" width="74" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="577" y="87" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">inbox</text>
+<rect x="624" y="55" width="40" height="26" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="644" y="72" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">…</text>
+<line x1="500" y1="64" x2="538" y2="55" stroke="#8a887f" stroke-width="1.2" marker-end="url(#a3)"/>
+<line x1="500" y1="72" x2="538" y2="81" stroke="#8a887f" stroke-width="1.2" marker-end="url(#a3)"/>
+<text x="40" y="132" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">② On read (follower B opens the app)</text>
+<rect x="40" y="144" width="110" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="95" y="173" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">B opens app</text>
+<rect x="180" y="144" width="220" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="290" y="166" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">just grab own inbox</text>
+<text x="290" y="183" text-anchor="middle" font-size="10.5" fill="#0f6e56" font-family="sans-serif">one query, very fast</text>
+<line x1="150" y1="168" x2="178" y2="168" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="40" y="222" width="640" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="60" y="248" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">But what about celebrities?</text>
+<text x="60" y="268" font-size="12.5" fill="#a8341a" font-family="sans-serif">A celeb with 30M followers posts once → 30M inboxes to deliver to, overwhelming the system at once</text>
+</svg>
+
+*Figure: V1 moves the complexity to the "post" side, making "view the feed" extremely simple — but for celebrities it blows up.*
+
+Where's the beauty? **It makes the most frequent, least patient side (reads) as dumb as possible.** B opens the app and no longer needs a live cross-200-people sort; they just grab a pre-built inbox. The expensive query that crushed V0 disappears entirely.
+
+This is what good design often looks like: **make the hottest, most frequent path as dumb as possible, and push the trouble to the less frequent side.**
+
+## V1 hits a wall: the celebrity problem
+
+But you've probably already sensed something off. "Deliver to every follower's inbox at post time" — what if this person has very, very many followers?
+
+A regular person has few followers, say 5,000; one post delivers to 5,000 inboxes, done in a blink. No problem.
+
+But a celebrity with 30 million followers posts once, and the system must **deliver to 30 million inboxes in one shot**. A super-celebrity with hundreds of millions of followers means hundreds of millions. This brings three disasters:
+
+First, **slow to a freeze**. If the system waits for all 30 million deliveries to finish before replying "posted" to the celebrity, they'll spin forever.
+
+Second, **drag everyone down**. Those 30 million deliveries devour system resources, making **everyone else's posts and reads at the same time slow down too**. One celebrity's post spills into a site-wide disaster.
+
+Third, **mostly wasted work**. Of those 30 million followers, maybe only a few will actually open the app this moment. Much of what you painstakingly delivered gets washed away by newer posts before it's seen. **You paid the highest cost for "people who may never even come look."**
+
+This phenomenon — "an extremely small number of super-hot things single-handedly drag down the whole path" — is a recurring classic in system design, called a **hot key**. It doesn't only show up here — I'll meet the same monster again and again in this series, just in different skins. Recognising "ah, this is a hot key again" matters more than memorising any single fix.
+
+## V2: don't force one method onto everyone
+
+The key turn of thought:
+
+> **The problem isn't with all posts, only with the small cluster of "celebrities."** Regular people's inbox delivery runs fine; no need to touch it. Only that sub-0.1% of super-accounts breaks.
+
+So why treat everyone with the same strategy? Regulars run great on "push" (deliver at post time); celebrities blow up — so for that small cluster, switch to the **opposite** strategy.
+
+What's the opposite? Go back to that old method we dismissed in V0: **fetch live at read time** (the industry calls this pull). Wait — didn't we say V0's live fetch was expensive? Yes, but its expense came from "fetching live across 200 people." For celebrities only, it's completely different — of your 200 follows, the celebrities are usually countable on one hand, maybe two or three. **Fetching two or three celebrities' latest posts live is an acceptable cost.**
+
+So V2 becomes a **hybrid strategy**:
+
+- **Regular person posts**: per V1, push into followers' inboxes.
+- **Celebrity posts**: don't deliver; just store on their own side. When a follower comes online, fetch live.
+- **How to tell who's a celebrity?** Use a simple, stable measure: **follower count**. Over some threshold (say 100K), treat as celebrity and "pull"; otherwise "push."
+
+Finally, when B opens the app, the system does three things: grab B's inbox (regular people's posts, cheap and ready); fetch the latest from the few celebrities B follows; then **merge** both sides in memory, sort by time, take the latest 20.
+
+<svg viewBox="0 0 720 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V2 hybrid: route by follower count at post time, push for regulars and not for celebrities; at read time merge the inbox with celebrity posts">
+<defs><marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="340" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="40" y="30" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">On write: route by follower count</text>
+<rect x="40" y="42" width="90" height="46" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="85" y="70" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">post</text>
+<rect x="170" y="42" width="140" height="46" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="240" y="63" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489" font-family="sans-serif">follower count</text>
+<text x="240" y="80" text-anchor="middle" font-size="10.5" fill="#3c3489" font-family="sans-serif">over threshold?</text>
+<line x1="130" y1="65" x2="168" y2="65" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<rect x="360" y="20" width="230" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="475" y="47" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">Regular → deliver to inboxes (push)</text>
+<rect x="360" y="92" width="270" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="495" y="113" text-anchor="middle" font-size="12.5" font-weight="600" fill="#854f0b" font-family="sans-serif">Celeb → no delivery, store on self (pull)</text>
+<line x1="310" y1="58" x2="358" y2="44" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="310" y1="72" x2="358" y2="110" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="30" y1="170" x2="690" y2="170" stroke="#e2ded4" stroke-width="1" stroke-dasharray="5 5"/>
+<text x="40" y="198" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">On read: merge both sides</text>
+<rect x="40" y="212" width="200" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="140" y="239" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">read own inbox (regular)</text>
+<rect x="40" y="268" width="200" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="140" y="295" text-anchor="middle" font-size="12.5" font-weight="600" fill="#854f0b" font-family="sans-serif">fetch the few celebs live</text>
+<rect x="290" y="240" width="130" height="48" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="355" y="262" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3c3489" font-family="sans-serif">merge in memory</text>
+<text x="355" y="279" text-anchor="middle" font-size="10.5" fill="#3c3489" font-family="sans-serif">sort by time</text>
+<rect x="470" y="240" width="200" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="570" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">latest 20 → to you</text>
+<line x1="240" y1="234" x2="288" y2="256" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="240" y1="290" x2="288" y2="270" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="420" y1="264" x2="468" y2="264" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+</svg>
+
+*Figure: V2 uses cheap "push" for the 99.9% regulars, and a tightly-scoped "pull" for the 0.1% celebrities — each playing to its strength.*
+
+Notice one thing: the "live cross-200-people big sort" you feared did **not** come back. The live work at read time is now only those **few** celebrities, not 200 people. We compressed the expensive "pull" down to just the hot key itself.
+
+About that routing threshold, one more word, because it hides an easily-missed judgement. I first wanted to route by "delivery time exceeding some multiple" — sounds clever, but it's a **jittery** metric: the same person takes very different times when the system is idle vs busy, so you'd get "the same account treated as regular one moment, celebrity the next," making behaviour unpredictable. **Follower count** is far steadier — it doesn't swing wildly, and it *is* the cost source (number of inboxes to deliver is proportional to follower count). **Pick a stable, predictable metric that maps directly to cost, not a clever one that jitters.** That judgement is worth more than the answer itself.
+
+## What did we actually do
+
+Step back. We started from an instinctive SQL query — "pull the posts from people you follow and sort them" — and it collapsed at scale; we found the root was "doing the most expensive sort at the most frequent read moment"; so we moved the expensive work to the write side, giving V1's inbox delivery; V1 blew up on celebrities, so we stopped using one method and split out V2's push/pull hybrid.
+
+The final "push for regulars, pull for celebrities, merge at read time, route by follower count" architecture is already very close to the real core skeleton of products like Twitter and Instagram.
+
+But what I want to stress is never that final diagram. It's this **path of derivation**:
+
+> Find where the previous version can't hold → add one layer, against that bottleneck and only it → never dump all the components at once.
+
+This is also why system design interviews look at how you *think*, not how many components you *memorised*. Someone who can explain "why this layer had to be added" always beats someone who can recite a long list of "what components exist."
+
+And did you notice — this whole route, "build the dumb working version → find its first ceiling → change the model instead of buying a bigger machine," is the exact same line of thinking as my video-system arc from [where multi-party hits the limit of Mesh](/en/blog/webrtc-poc-2-mesh-limit) to [evolving from Mesh to an SFU](/en/blog/webrtc-poc-4-sfu-scale)? That's no coincidence — **it's a transferable way of thinking**, and what this series wants is to drill it, part by part, into your instinct.
+
+## Still unsolved (next part)
+
+V2 looks lovely, but it still hides a few holes we deliberately left:
+
+- Where exactly does that "inbox" live? What data structure makes "deliver," "take the latest 20," and "drop the too-old" all fast?
+- A regular post delivers to 5,000 inboxes — if that's done "synchronously" (the user waits until delivery finishes to see "posted"), don't they wait too? How do we return "success" **instantly** and push delivery to the background?
+- If background delivery fails halfway, who fixes it? How do we ensure "even if late, the post will eventually arrive"?
+
+These will naturally force out a role called **Kafka**, plus the concepts of **async** and **idempotency**. See you in the next part.
+
+---
+
+*This is the first main part of the "Designing a News Feed System" series. If this "don't memorise the architecture, derive it step by step" style helps you, follow along — the problems only get more interesting.*

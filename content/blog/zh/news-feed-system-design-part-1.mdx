@@ -1,0 +1,293 @@
+---
+title: "從一句 SQL 開始：動態消息系統，真正困難的不是把貼文列出來"
+date: "2026-06-28"
+description: "設計一個像 Threads、Instagram 的首頁時間軸，第一直覺通常是『把追蹤的人的貼文撈出來、依時間排好』。這篇從那句最自然的 SQL 出發，看它為什麼會在規模下崩潰，再一步步推導出推播（fan-out）與名人混合策略——重點不是最終架構長怎樣，而是每一步為什麼非這樣不可。"
+tags: ["系統設計", "系統架構", "分散式系統", "工程思考", "學習方法"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 1
+---
+
+> 這是「動態消息系統設計」系列的第一篇。這個系列不是教你背一張最終架構圖，而是帶你**親手推導**它——每加一個元件，都要有一個具體的瓶頸逼你加。這跟我之前寫 WebRTC 從 Mesh 到 SFU 的那條線是同一套思路：先找到上一版撐不住的地方，再決定下一步。
+>
+> 另外先誠實說一句：這是一場**設計推演**，不是我真的蓋了一個 Twitter。它比較像面試白板上、或一個人對著紙推敲的過程。我把推導的每一步攤開來，因為對我自己、對讀者來說，真正有價值的從來不是答案，而是「為什麼會走到這個答案」。
+
+## 我一開始問錯了問題
+
+練系統設計的時候，我犯了一個很典型的錯。
+
+題目是：「設計一個動態消息系統，使用者打開 App 就能看到他追蹤的人發的最新貼文。」聽完，我立刻開始問一堆問題——一次要載入幾筆貼文？滑到第幾筆才載入下一批？圖片要不要依螢幕大小調整？貼文底下的留言要一起載，還是先載個數字就好？
+
+這些問題都不算錯。但它們有一個共同點：**全都是「畫面長怎樣」的細節，沒有一個會改變系統底層的形狀。**
+
+後來我才慢慢抓到一把尺，這把尺現在我每道題都會先拿出來用：
+
+> **一個問題值不值得先問，看它會不會「改變架構」。** 一頁載 20 筆還是 50 筆，後端都是同一支 API，不會 fork 出兩種設計；但「使用者有多少」「平均追蹤幾個人」「讀和寫差幾倍」這種問題，答案不同，整個系統就會長成完全不同的樣子。
+
+所以這篇的第一個收穫，在你還沒看任何架構圖之前就先給你：**設計一個系統，先看宏觀的數字，再看畫面的細節。** 接下來你會看到，光是「讀比寫多很多」這一件事，就決定了後面所有的設計。
+
+## 先把題目講成人話
+
+如果你不熟「動態消息系統」這個詞，它其實就是你每天在用的東西：
+
+打開 Threads、Instagram、Twitter / X，第一個看到的那條「首頁」——你追蹤的一堆人發的貼文，混在一起、大致照時間由新到舊排好。這條東西的正式名字叫**首頁時間軸（home timeline）**，或者**動態消息（news feed）**。
+
+聽起來很單純對吧？「就把我追蹤的人的貼文撈出來、排個序」嘛。沒錯，如果只有你和你的 50 個朋友，這真的很單純。讓它變困難的，是**規模**。
+
+## 規模：這題真正的主角
+
+我把這次練習設定在一個大型平台的量級（數字取整、方便心算）：
+
+- 註冊使用者：**5 億**
+- 每天實際會打開來用的人（日活躍）：**2 億**
+- 平均每個人追蹤：**200 人**
+- 每天總共發出的貼文：約 **5 億則**
+- 而且——**讀取的次數，大約是寫入（發文）的 100 倍**
+
+最後那一條是整篇的鑰匙，我們把它算清楚。
+
+「發文」這個動作，一天 5 億次，平均到每一秒，大約是 **5,800 次／秒**。
+「打開來看」這個動作，是發文的 100 倍，大約是 **58 萬次／秒**。
+
+（這種「把每天的總量除以一天的秒數、抓個大概」的估算，工程上叫 back-of-the-envelope，就是信封背面隨手一算。不用很精準，抓對數量級就好。）
+
+請先記住這個對比：**看（讀），每秒 58 萬次；發（寫），每秒不到 6 千次。讀比寫多了 100 倍。** 等一下你會看到，整個設計的轉折，就是繞著這個 100 倍在轉。
+
+## V0：照直覺做，會怎樣？
+
+我們先做一個最笨、最直覺的版本。在系統設計裡，先做一個「能動但會壞」的版本是好習慣——因為它會親手把瓶頸爆給你看，你才知道下一步該修哪裡。我把這個版本叫 V0。
+
+資料先用三張表存（表你可以想成 Excel 的三個分頁，每一列是一筆資料）：
+
+- **使用者表**：每個人的 id、名字、頭像。
+- **追蹤關係表**：一列記一段關係，「A 追蹤了 B」。
+- **貼文表**：每一則貼文的 id、內容、作者、發文時間。
+
+現在，使用者打開 App，我們要組出他的首頁。最直覺的做法是：先去「追蹤關係表」查出他追蹤了哪 200 人，再去「貼文表」把這 200 人的貼文撈出來，依時間排好，取最新的 20 筆。寫成資料庫查詢大概長這樣：
+
+```sql
+-- 「使用者 U 打開首頁」時，資料庫實際跑的查詢
+SELECT p.* FROM posts p
+WHERE p.user_id IN (
+    SELECT following_id FROM follows WHERE follower_id = U
+)
+ORDER BY p.created_at DESC
+LIMIT 20;
+```
+
+就算你完全看不懂 SQL 也沒關係，我用白話翻譯這句話在做的事：
+
+1. 先找出 U 追蹤的那 200 個人。
+2. 把這 200 個人**最近發的貼文全部撈出來**。
+3. 全部混在一起，**從新到舊排序**。
+4. 只取最前面的 20 筆給使用者，**其餘的全部丟掉**。
+
+<svg viewBox="0 0 720 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V0 流程：使用者打開 App，App Server 把工作丟給資料庫，資料庫跑一句昂貴的跨表排序查詢">
+<defs><marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="250" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="46" width="130" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="105" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">你的 App</text>
+<text x="105" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">打開首頁</text>
+<rect x="240" y="46" width="150" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="315" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">App 伺服器</text>
+<text x="315" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">幾乎沒做事</text>
+<rect x="470" y="46" width="210" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="575" y="72" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">資料庫</text>
+<text x="575" y="90" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">使用者 / 追蹤關係 / 貼文</text>
+<line x1="170" y1="74" x2="238" y2="74" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a1)"/>
+<line x1="390" y1="74" x2="468" y2="74" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a1)"/>
+<line x1="560" y1="102" x2="470" y2="142" stroke="#d85a30" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a1)"/>
+<rect x="240" y="142" width="440" height="82" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="260" y="168" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">瓶頸：為了拿最新 20 筆…</text>
+<text x="260" y="190" font-size="12.5" fill="#a8341a" font-family="sans-serif">資料庫得先撈出 200 人最近的「全部」貼文、排序，再丟掉其餘</text>
+<text x="260" y="210" font-size="12.5" fill="#a8341a" font-family="sans-serif">而且每一次打開 App，都從頭重跑一遍</text>
+</svg>
+
+*圖：V0 把所有的工作都丟給資料庫，在「讀取的當下」現場組出首頁。*
+
+這個版本能動。問題是它會在某個地方爆掉——而且爆的地方，跟大多數人第一直覺想的不一樣。
+
+很多人會說：「就是請求太多嘛，每秒 58 萬次，資料庫當然撐不住。」這句話對了一半，但不夠精準。真正的痛點不是「請求數量多」，而是**「每一次請求要做的事，本身就很貴」**。
+
+貴在哪？看上面那四個步驟的第 2、3 步：為了給你最新的 20 筆，資料庫必須先把這 200 人最近的**全部**貼文撈出來、全部排序，然後把多的丟掉。你只想要 20 筆，它卻得先碰幾百上千筆。這就像你只想知道全班最高的三個人，卻得先把全班 40 個人全部叫起來排成一列才能挑——你要 3 個，卻動了 40 個。
+
+再把這件昂貴的事，乘上每秒 58 萬次。**每一個打開 App 的人，都在「打開的那一瞬間」逼資料庫現場跑這場大撈取＋大排序。** 資料庫很快就被這些重複的、昂貴的現場運算壓垮了。
+
+這裡有一個關鍵字，請記住：問題出在**時機**。這場昂貴的運算，發生在「讀取的當下」——也就是使用者最沒耐心、而且發生最頻繁（每秒 58 萬次）的那個時間點。
+
+## 關鍵的翻轉：把貴的工，從「讀」搬到「寫」
+
+地點我們很難改（資料總得放在某個資料庫裡），但**時機可以改**。這就是整題的轉軸。
+
+回去看那兩個數字：讀取每秒 58 萬次，寫入每秒不到 6 千次，差 100 倍。現在問一個問題：
+
+> 同一個人連續刷新兩次首頁，內容通常幾乎沒變。我們卻每次都從零重算一遍。那……這場昂貴的排序，能不能不要在「讀的時候」做，而是挪到「寫的時候」先做好？
+
+如果可以，那等於把一件昂貴的計算，從「每秒發生 58 萬次」的時間點，搬到「每秒只發生 6 千次」的時間點。**算一次、存起來，之後那 100 次讀取直接拿現成的就好。**
+
+<svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="核心翻轉：讀取每秒 58 萬次很昂貴，寫入每秒不到 6 千次，把昂貴的工搬到寫入端只做一次">
+<defs><marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#1d9e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="200" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="40" y="45" width="250" height="112" rx="11" fill="#f8eae5" stroke="#d85a30"/>
+<text x="165" y="90" text-anchor="middle" font-size="26" font-weight="800" fill="#a8341a" font-family="sans-serif">580,000 / 秒</text>
+<text x="165" y="116" text-anchor="middle" font-size="13" fill="#a8341a" font-family="sans-serif">讀取：昂貴的排序原本在這</text>
+<text x="165" y="138" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">每秒重算 58 萬次</text>
+<rect x="470" y="62" width="210" height="78" rx="11" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="575" y="98" text-anchor="middle" font-size="22" font-weight="800" fill="#0f6e56" font-family="sans-serif">5,800 / 秒</text>
+<text x="575" y="122" text-anchor="middle" font-size="13" fill="#0f6e56" font-family="sans-serif">寫入：搬到這裡只做一次</text>
+<line x1="290" y1="101" x2="468" y2="101" stroke="#1d9e75" stroke-width="2" marker-end="url(#a2)"/>
+<text x="379" y="90" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f6e56" font-family="sans-serif">把貴的工搬過來</text>
+<text x="379" y="120" text-anchor="middle" font-size="11.5" fill="#6b6a64" font-family="sans-serif">差 100 倍</text>
+</svg>
+
+*圖：整題的靈魂——把昂貴的工，從每秒 58 萬次的「讀」，搬到每秒 6 千次的「寫」。*
+
+這個念頭，就是接下來這個設計的核心。它有個名字叫 **fan-out-on-write**，中文常說「寫入時推播」。下一段我們把它變具體。
+
+## V1：發文的時候，先把貼文「投遞」到每個粉絲的信箱
+
+我用一個生活比喻來講這個設計：**信箱投遞**。
+
+想像每個使用者都有一個專屬的**信箱（收件匣）**。現在改變規則：
+
+- **發文的時候（寫）**：A 發了一則貼文，系統不只是把貼文存起來，而是**立刻去查出 A 的所有粉絲，把這則貼文投遞到每一個粉絲的信箱裡。**
+- **看首頁的時候（讀）**：B 打開 App，他什麼都不用算，**直接去拿自己的信箱**就好——裡面已經是一疊投遞好、排好序的貼文了。
+
+<svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V1 推播：發文時把貼文投遞進每個粉絲的信箱，讀取時直接拿自己的信箱；但名人有 3000 萬粉絲會塞爆">
+<defs><marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="300" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="40" y="32" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">① 發文時（A 發一則貼文）</text>
+<rect x="40" y="44" width="110" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="95" y="73" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">A 發文</text>
+<rect x="180" y="44" width="130" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="245" y="73" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">找出 A 的粉絲</text>
+<rect x="340" y="44" width="160" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="420" y="66" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">投遞到每個信箱</text>
+<text x="420" y="83" text-anchor="middle" font-size="10.5" fill="#0f6e56" font-family="sans-serif">fan-out</text>
+<line x1="150" y1="68" x2="178" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<line x1="310" y1="68" x2="338" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="540" y="40" width="74" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="577" y="57" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">信箱</text>
+<rect x="540" y="70" width="74" height="26" rx="6" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="577" y="87" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">信箱</text>
+<rect x="624" y="55" width="40" height="26" rx="6" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="644" y="72" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">…</text>
+<line x1="500" y1="64" x2="538" y2="55" stroke="#8a887f" stroke-width="1.2" marker-end="url(#a3)"/>
+<line x1="500" y1="72" x2="538" y2="81" stroke="#8a887f" stroke-width="1.2" marker-end="url(#a3)"/>
+<text x="40" y="132" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">② 讀取時（粉絲 B 打開 App）</text>
+<rect x="40" y="144" width="110" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="95" y="173" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">B 打開 App</text>
+<rect x="180" y="144" width="220" height="48" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="290" y="166" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">直接拿自己的信箱</text>
+<text x="290" y="183" text-anchor="middle" font-size="10.5" fill="#0f6e56" font-family="sans-serif">一次就好，超快</text>
+<line x1="150" y1="168" x2="178" y2="168" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="40" y="222" width="640" height="58" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="60" y="248" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">但名人怎麼辦？</text>
+<text x="60" y="268" font-size="12.5" fill="#a8341a" font-family="sans-serif">一位 3000 萬粉絲的名人發一則文 → 要投遞 3000 萬個信箱，瞬間塞爆系統</text>
+</svg>
+
+*圖：V1 把複雜度搬到了「發文」這一側，讓「看首頁」變得極度簡單——但對名人就出事了。*
+
+這個設計漂亮在哪？**它把最頻繁、最沒耐心的那一側（讀取）變到不能再簡單。** B 打開 App，不再需要跨 200 人現場大排序了，他只是去拿一個早就準備好的信箱。那個壓垮 V0 的昂貴查詢，徹底消失。
+
+這就是好設計常有的樣子：**讓最熱、最頻繁的那條路越笨越好，把麻煩推給比較不頻繁的那一側。**
+
+## V1 撞牆：名人問題
+
+但你大概已經嗅到不對勁了。「發文時投遞到每個粉絲的信箱」——如果這個人有很多很多粉絲呢？
+
+一般人粉絲不多，假設 5000 個，發一則文就投遞 5000 個信箱，眨眼就做完。沒問題。
+
+但一位粉絲 3000 萬的名人發一則文，系統就要**一口氣投遞 3000 萬個信箱**。如果某位超級名人有上億粉絲，那就是上億次。這帶來三個災難：
+
+第一，**慢到卡死**。如果系統要等這 3000 萬次投遞全部完成，才回這位名人一句「發送成功」，他會在那裡轉圈圈轉到天荒地老。
+
+第二，**拖垮所有人**。這 3000 萬次投遞會把系統資源吃光，連帶讓**同一時間其他普通人的發文和讀取都變慢**。一個名人的貼文，外溢成全站的災難。
+
+第三，**大部分是白工**。那 3000 萬粉絲裡，這一刻可能只有少數人真的會打開 App。你辛辛苦苦投遞進去的東西，很多在被看到之前，就已經被更新的貼文洗下去了。**你為「可能根本不會來看的人」付出了最貴的成本。**
+
+這個「極少數超級熱門的東西，單獨拖垮整條路徑」的現象，在系統設計裡是一個反覆出現的經典難題，業界叫它 **hot key（熱點）**。它不只出現在這裡——我之後在這個系列裡會一次又一次遇到同一隻怪，只是換不同的皮。能認出「啊，這又是 hot key」，比記住任何單一解法都重要。
+
+## V2：不要用一種方法硬解所有人
+
+關鍵的轉念是這樣的：
+
+> **問題不是出在所有貼文上，只出在「名人」這一小撮人身上。** 普通人的信箱投遞跑得好好的，沒必要動它。出事的，只有那不到 0.1% 的超級帳號。
+
+那為什麼要用同一種策略對待所有人呢？普通人用「推」（發文時投遞）跑得很好，名人會爆——那名人這一小撮，乾脆換一種**相反**的策略。
+
+什麼是相反的策略？就是回到 V0 那個被我們嫌棄的老方法：**讀的時候才現場去撈**（這招業界叫 pull，「拉取」）。等等，我們不是說 V0 的現場撈很貴嗎？對，但別忘了它貴的原因是「要跨 200 人現場撈」。如果只針對名人，情況完全不同——你追蹤的 200 人裡，名人通常一隻手數得完，可能就兩三個。**現場去撈兩三個名人的最新貼文，成本是可以接受的。**
+
+於是 V2 變成一個**混合策略**：
+
+- **普通人發文**：照 V1，推播到粉絲信箱。
+- **名人發文**：不投遞，只把貼文存在自己這邊。等粉絲上線時，現場去撈。
+- **怎麼判斷誰是名人？** 用一個簡單、穩定的標準：**粉絲數**。超過某個門檻（例如 10 萬）就當名人走「拉」，否則走「推」。
+
+最後，當 B 打開 App，系統做三件事：先拿 B 的信箱（普通人的貼文，便宜又現成）；再現場去撈 B 追蹤的那幾個名人的最新貼文；然後把兩邊在記憶體裡**合併**，依時間排好，取最新 20 筆給他。
+
+<svg viewBox="0 0 720 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V2 混合：發文時依粉絲數分流，普通人推、名人不推；讀取時把信箱與名人貼文合併">
+<defs><marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="340" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="40" y="30" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">發文時：依粉絲數分流</text>
+<rect x="40" y="42" width="90" height="46" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="85" y="70" text-anchor="middle" font-size="13.5" font-weight="600" fill="#23221f" font-family="sans-serif">發文</text>
+<rect x="170" y="42" width="140" height="46" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="240" y="63" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489" font-family="sans-serif">看粉絲數</text>
+<text x="240" y="80" text-anchor="middle" font-size="10.5" fill="#3c3489" font-family="sans-serif">超過門檻？</text>
+<line x1="130" y1="65" x2="168" y2="65" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<rect x="360" y="20" width="210" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="465" y="47" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">普通人 → 投遞信箱（推）</text>
+<rect x="360" y="92" width="250" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="485" y="113" text-anchor="middle" font-size="12.5" font-weight="600" fill="#854f0b" font-family="sans-serif">名人 → 不投遞，只存自己（拉）</text>
+<line x1="310" y1="58" x2="358" y2="44" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="310" y1="72" x2="358" y2="110" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="30" y1="170" x2="690" y2="170" stroke="#e2ded4" stroke-width="1" stroke-dasharray="5 5"/>
+<text x="40" y="198" font-size="12.5" font-weight="700" fill="#6b6a64" font-family="sans-serif">看首頁時：把兩邊合起來</text>
+<rect x="40" y="212" width="190" height="44" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="135" y="239" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f6e56" font-family="sans-serif">讀自己的信箱（普通人）</text>
+<rect x="40" y="268" width="190" height="44" rx="9" fill="#faeeda" stroke="#ba7517"/>
+<text x="135" y="295" text-anchor="middle" font-size="12.5" font-weight="600" fill="#854f0b" font-family="sans-serif">現場撈幾個名人</text>
+<rect x="280" y="240" width="130" height="48" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="345" y="262" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3c3489" font-family="sans-serif">在記憶體合併</text>
+<text x="345" y="279" text-anchor="middle" font-size="10.5" fill="#3c3489" font-family="sans-serif">依時間排好</text>
+<rect x="460" y="240" width="200" height="48" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="560" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">最新 20 筆 → 給你</text>
+<line x1="230" y1="234" x2="278" y2="256" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="230" y1="290" x2="278" y2="270" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+<line x1="410" y1="264" x2="458" y2="264" stroke="#8a887f" stroke-width="1.5" marker-end="url(#a4)"/>
+</svg>
+
+*圖：V2 用便宜的「推」處理 99.9% 的普通人，用範圍極小的「拉」處理那 0.1% 的名人，兩邊各取所長。*
+
+注意一件事：你最害怕的「跨 200 人現場大排序」並沒有回來。讀取時現場處理的對象，只剩那**幾個**名人，不是 200 人。我們把昂貴的「拉」壓縮到了只剩 hot key 本身。
+
+關於那條分流的門檻，我想多講一句，因為它藏著一個容易被忽略的判斷。我一開始想用「投遞耗時超過某個倍數」來判斷誰該走拉——聽起來很聰明，但這是個會「抖動」的指標：同一個人在系統閒的時候、忙的時候，耗時差很多，你會發生「同一個帳號一下被當普通人、一下被當名人」的反覆橫跳，系統行為變得不可預測。**粉絲數**就穩定多了——它不太會劇烈變動，而且它本身就是成本的根源（要投遞幾個信箱，正比於粉絲數）。**挑一個穩定、可預測、直接對應成本的指標來分流，比挑一個聰明但會抖的指標可靠得多。** 這個判斷，其實比答案本身更值得帶走。
+
+## 我們其實做了什麼
+
+退一步看。我們從一句「把追蹤的人的貼文撈出來排好」的直覺 SQL 出發，它在規模下崩潰了；我們發現崩潰的根源是「在最頻繁的讀取當下，做最昂貴的排序」；於是把昂貴的工搬到寫入端，變成 V1 的信箱投遞；V1 對名人爆掉，於是我們不再用單一方案，分出 V2 的推拉混合。
+
+最後得到的這個「普通人推、名人拉、讀取時合併、用粉絲數分流」的架構，其實已經很接近 Twitter、Instagram 這類產品真實在用的核心骨架了。
+
+但我想強調的，從來不是這張最終的圖。是這條**推導的路徑**：
+
+> 找到上一版撐不住的地方 → 針對那個瓶頸、且只針對它，加一層 → 千萬別一開始就把所有元件倒出來。
+
+這也是為什麼系統設計的面試，看的是你「怎麼想」，而不是你「背了多少元件」。一個能講清楚「為什麼非加這一層不可」的人，永遠贏過一個能背出一長串「有哪些元件」的人。
+
+而且你有沒有發現，這整條「先做出能動的笨版本 → 找到它的第一個上限 → 改變模型而不是把機器開大」的路線，跟我之前寫視訊系統[從多人撞上 Mesh 的上限](/zh/blog/webrtc-poc-2-mesh-limit)、再[從 Mesh 演進到 SFU](/zh/blog/webrtc-poc-4-sfu-scale) 的那條線，根本是同一套思路？這不是巧合——**這是一種可以跨領域遷移的思考方式**，而這個系列想做的，就是把它一篇一篇練成你的直覺。
+
+## 還沒解決的事（下一篇）
+
+V2 看起來很美，但它其實還埋著幾個我們刻意沒處理的洞：
+
+- 那個「信箱」到底存在哪裡？用什麼資料結構，才能讓「投遞」「取最新 20 筆」「丟掉太舊的」都很快？
+- 普通人發一則文要投遞 5000 個信箱——這件事如果是「同步」做的（使用者要等投遞完才看到「成功」），他不也得等嗎？怎麼讓他**立刻**收到「成功」，把投遞丟到背景慢慢做？
+- 如果背景投遞到一半失敗了，誰來補救？怎麼確保「就算晚一點，貼文最終一定會送到」？
+
+這些會把一個叫 **Kafka** 的角色，以及「**非同步**」「**冪等**」這些概念，自然地逼出來。下一篇見。
+
+---
+
+*這是「動態消息系統設計」系列第一篇。如果這種「不背架構、而是一步步推導架構」的寫法對你有幫助，歡迎追下去——後面的題目會越來越有意思。*

@@ -19,6 +19,7 @@
 export const CATEGORY_KEYS = [
   'go-notes',
   'webrtc-system',
+  'system-design',
   'ai-collaboration',
   'career',
 ] as const;
@@ -40,7 +41,7 @@ export function isCategoryKey(value: unknown): value is CategoryKey {
  * therefore optional in frontmatter. Labels live in the `blog.series` message
  * namespace; sequence within a series is derived from date + `order`.
  */
-export const SERIES_KEYS = ['go-with-ai-agent', 'webrtc-poc'] as const;
+export const SERIES_KEYS = ['go-with-ai-agent', 'webrtc-poc', 'news-feed-system-design'] as const;
 
 export type SeriesKey = (typeof SERIES_KEYS)[number];
 

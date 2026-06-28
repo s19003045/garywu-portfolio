@@ -1,0 +1,205 @@
+---
+title: "東西壞掉的時候才見真章：追不上的工人、快取雪崩，與第三次現身的 hot key"
+description: "工程裡真正考驗一個系統的，不是它一切正常的時候，而是東西開始壞掉的時候。這篇故意搞破壞：背景工人追不上怎麼辦、裝著幾億人信箱的 Redis 整個掛掉為什麼會引發雪崩、以及那隻叫 hot key 的怪如何第三次現身。把這些都想過一遍，這個設計才算真的完整。"
+date: "2026-06-30"
+category: "系統設計"
+series: "動態消息系統設計"
+seriesOrder: 3
+tags: ["系統設計", "系統架構", "分散式系統", "Redis", "快取", "高可用", "工程思考"]
+slug: "news-feed-system-design-part-3"
+lang: "zh"
+---
+
+> 這是「動態消息系統設計」系列的最後一篇。前情提要：[Part 1](/zh/blog/news-feed-system-design-part-1) 從一句崩潰的 SQL 推導到「普通人推、名人拉」的混合架構；[Part 2](/zh/blog/news-feed-system-design-part-2) 補上了信箱（Redis Sorted Set）、用 Kafka 把投遞推到背景，以及「成功」的真正意思。這篇我們來故意搞破壞。
+
+## 一個我很晚才學到的心態
+
+我以前以為，一個設計「能跑起來」就算完成了。把流程畫出來、資料能進能出、使用者拿得到他要的東西——好，收工。
+
+後來我慢慢體會到，這只是設計的一半。另一半，而且往往是更難、更能分出高下的一半，是這句話：
+
+> **中級工程師設計「一切正常時」的系統；資深工程師設計「東西壞掉時還能撐住」的系統。**
+
+任何一個夠大的系統，零件壞掉不是「會不會」的問題，而是「什麼時候、哪個先壞」的問題。機器會當機、網路會斷、流量會突然暴衝。一個成熟的設計，不是假裝這些不會發生，而是事先想好「當它發生時，系統會怎麼優雅地退化，而不是直接崩給使用者看」。
+
+所以這最後一篇，我們不再加新功能，而是拿著我們前兩篇蓋好的系統，一個一個零件去敲，看它哪裡會痛、痛了怎麼辦。
+
+先快速回顧我們手上的系統：使用者發文 → 看粉絲數分流。普通人丟一張投遞工單上 Kafka、立刻回「成功」，背景工人把貼文投進每個粉絲的信箱（信箱是 Redis 的 Sorted Set）；名人不投遞，只更新自己的貼文。看首頁時，把信箱和名人的貼文合併。
+
+好，開始搞破壞。
+
+## 壞掉一：背景工人追不上了
+
+先敲最前面那條輸送帶。
+
+想像跨年夜的午夜，全世界的人同時發文拜年，發文量暴衝到平常的 20 倍。我們的背景投遞工人拼了命地撿工單、投信箱，但**工單湧進來的速度，遠比工人處理的速度快**。於是輸送帶上的工單越積越多，待投遞的隊伍越拉越長。
+
+這個「待辦清單越積越長」的現象，有個名字叫 **consumer lag**（消費延遲）。後果是：一則貼文發出來，要等比較久才會真的出現在粉絲的信箱裡。
+
+該怎麼辦？最直覺的反應是——**多請幾個工人**。從 50 個工人加到 500 個，一起撿工單，就能追上積壓。
+
+這招之所以可行，是因為我們的工人是**「無狀態」的**。這個詞聽起來很抽象，講白了就是：**工人不需要記住任何東西。** 每一張工單都是獨立、完整的，工人撿起一張、照著做、做完就忘，下一張跟上一張毫無關係。正因為工人之間不需要互相協調、不需要共享記憶，你才可以隨時多塞幾個進來，他們立刻就能開工。**無狀態 = 可以隨意增加分身。**
+
+<svg viewBox="0 0 720 230" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="工人追不上：發文暴量讓 Kafka 工單堆積，多請工人能止血，但壓力會移到有狀態的 Redis，那才是真正的天花板">
+<defs><marker id="c1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="230" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="30" y="80" width="120" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="90" y="105" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">發文暴量</text>
+<text x="90" y="123" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">×20</text>
+<rect x="190" y="80" width="150" height="56" rx="9" fill="#eeedfe" stroke="#7f77dd"/>
+<text x="265" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#3c3489" font-family="sans-serif">Kafka：工單堆積</text>
+<text x="265" y="123" text-anchor="middle" font-size="11" fill="#3c3489" font-family="sans-serif">隊伍越拉越長</text>
+<rect x="380" y="80" width="140" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="450" y="105" text-anchor="middle" font-size="13" font-weight="600" fill="#0f6e56" font-family="sans-serif">工人 ×N</text>
+<text x="450" y="123" text-anchor="middle" font-size="11" fill="#0f6e56" font-family="sans-serif">無狀態 → 可加</text>
+<rect x="560" y="80" width="130" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="625" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">Redis（有狀態）</text>
+<text x="625" y="123" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">真正的天花板</text>
+<line x1="150" y1="108" x2="188" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<line x1="340" y1="108" x2="378" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<line x1="520" y1="108" x2="558" y2="108" stroke="#8a887f" stroke-width="1.5" marker-end="url(#c1)"/>
+<text x="360" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">多請工人能止血，但壓力只是「移動」到下一站</text>
+<text x="360" y="178" text-anchor="middle" font-size="12" fill="#6b6a64" font-family="sans-serif">工人解開了，壓力流到最後那個有狀態、無法隨便增加分身的環節</text>
+</svg>
+
+*圖：止血手段（加工人）有極限——因為瓶頸會移動到下一個最弱的環節。*
+
+但這裡有個更深的洞察，它區分了「會解」和「想得夠遠」：**加工人不是無限有效的。** 你把工人加到很多，壓力不會憑空消失，它只是從「工人」這一站，**移動到下一站**——也就是工人最終要寫入的地方：**Redis**。
+
+而 Redis 跟工人不一樣，它是**「有狀態」的**。它得「記住」幾億人的信箱內容。你沒辦法像加工人那樣，隨手多開一台 Redis 分身就解決——因為新開的分身是空的，它不知道那些信箱在哪、誰歸誰管，你還得處理一堆「資料怎麼切、哪台負責哪些人」的麻煩。**有狀態的東西，擴展起來代價大得多。** 所以它才是這條路徑真正的天花板，是你該提前做容量規劃的地方。
+
+> 這是一條跨系統通用的通則：**無狀態的東西負責擴展、有狀態的東西負責守底線。** 你永遠可以多塞一堆無狀態的工人，但所有壓力最終會匯聚到那個有狀態的儲存層。下次你看到「一排無狀態的東西擋在一個有狀態的東西前面」，就知道真正的瓶頸在後面那個。
+
+那 consumer lag 到底算不算嚴重故障？答案很有意思：**在這個系統，它只是可以容忍的暫時退化，不是故障。** 為什麼？因為我們從 Part 1 就定下「新貼文最終看得到就好、晚幾秒沒關係」。工人慢一點、貼文晚幾秒進信箱，並沒有違反系統的任何承諾。
+
+對照一下你就懂這個判斷的精髓了：同樣是「處理延遲」，如果發生在一個**售票系統的庫存扣減**上，那就是致命故障——因為那裡的承諾是「絕不超賣」，延遲會直接導致賣出不存在的票。同一個技術現象，在一個系統可以聳聳肩、在另一個系統會要你命。**差別不在技術，在這個系統對「一致性」的容忍度。** 這也是為什麼 Part 1 我那麼強調，一開始就要問清楚「使用者能不能接受延遲」——它在最後這裡，直接決定了什麼故障是災難、什麼故障你可以暫時忍。
+
+## 壞掉二：裝著幾億人信箱的 Redis，整個掛了
+
+敲完輸送帶，來敲那個我們剛說是「天花板」的 Redis。假設存放幾億人信箱的 Redis 叢集，某一片或整個當機了。
+
+當下會發生什麼？使用者打開 App，要讀自己的信箱，但信箱不見了——他看到一片空白。
+
+聽起來很可怕，但先冷靜定性。還記得 Part 2 那把尺嗎：**這份資料掉了會怎樣？** 信箱是**可以重算的**（從「他追蹤誰、那些人最近發了什麼」重新投遞一次就好），所以 Redis 掛掉是**效能災難，不是資料災難**——沒有任何貼文永久消失，真正的貼文本體還好端端躺在資料庫裡。
+
+而且你發現一件有趣的事：要重建信箱，靠的正是 Part 1 那個被我們最早嫌棄、丟掉的 V0 笨方法（那句跨表撈取的查詢）。它在 Part 2 當「滑超過 1000 筆的兜底」，現在又當「災難時重建信箱的來源」。**同一個笨方法，第三次回來救場。** 早期的笨設計很少真的是錯的，它只是不該放在熱路徑上——但它幾乎永遠是你最後的保險絲。
+
+不過——這裡藏著一個真正會二次殺死你的陷阱，也是面試官最愛追的地方。你不能只說「掉了能重建」就結束，因為**重建的那一瞬間**才是最危險的：
+
+Redis 一掛，幾億人的信箱**同時**消失。下一秒，這幾億人打開 App、全部讀信箱失敗、於是**全部同時退回去打資料庫**，而且每一個打的都是那句我們花了整整三篇在閃避的、最昂貴的跨表查詢。本來被快取擋在外面、舒舒服服的資料庫，突然要在一瞬間承受每秒幾十萬筆最貴的查詢——它本來就不是設計來扛這個的（這正是當初我們引入快取的原因）。於是資料庫也被打垮。資料庫一垮，連真相來源都癱了，**全站掛掉**。
+
+<svg viewBox="0 0 720 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="快取雪崩：Redis 全掛，幾億人同時退回打資料庫跑最貴的查詢，資料庫被打垮，全站掛">
+<defs><marker id="c2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#d85a30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="170" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="24" y="56" width="128" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="88" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">Redis 全掛</text>
+<text x="88" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">幾億信箱消失</text>
+<rect x="192" y="56" width="148" height="60" rx="10" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="266" y="83" text-anchor="middle" font-size="13" font-weight="600" fill="#23221f" font-family="sans-serif">幾億人同時</text>
+<text x="266" y="101" text-anchor="middle" font-size="11" fill="#6b6a64" font-family="sans-serif">退回去打資料庫</text>
+<rect x="380" y="56" width="160" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="460" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">最貴的查詢淹沒它</text>
+<text x="460" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">資料庫扛不住</text>
+<rect x="580" y="56" width="116" height="60" rx="10" fill="#f8eae5" stroke="#d85a30"/>
+<text x="638" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#a8341a" font-family="sans-serif">資料庫垮</text>
+<text x="638" y="101" text-anchor="middle" font-size="11" fill="#a8341a" font-family="sans-serif">全站掛</text>
+<line x1="152" y1="86" x2="190" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<line x1="340" y1="86" x2="378" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<line x1="540" y1="86" x2="578" y2="86" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c2)"/>
+<text x="360" y="145" text-anchor="middle" font-size="12" fill="#6b6a64" font-family="sans-serif">一個「效能災難」因為沒處理好中間態，雪崩成「全站災難」</text>
+</svg>
+
+*圖：快取雪崩（cache stampede）——快取一掛，裸露的流量瞬間沖垮後面的資料庫。*
+
+這個連鎖反應叫 **cache stampede**（快取雪崩，或譯驚群效應）。你可以想像一個畫面：平常大家都走那道很寬的自動門（Redis），突然門壞了，所有人同時湧向旁邊那個只能容一人的小側門（資料庫），小門瞬間被擠爆。
+
+所以「能重建」這個結論沒錯，但**重建的過程本身必須被保護**，不能讓幾億人同時裸奔去打資料庫。常見的緩解手段有三個方向（記住思路就好）：
+
+- **限流／降級**：在資料庫前面擋一層，只放有限的流量進去重算，其餘的請求先回「載入中」或先給一份舊資料。寧可讓使用者慢、絕不讓資料庫垮——保護真相來源是最高優先。
+- **共用重算結果**：同一個人的信箱，只允許「第一個來的請求」真的去打資料庫重建，其餘同時湧進來的請求就等它建好、共用那個結果，而不是每個請求都各自去打一次。
+- **別讓它一起死**：Redis 本身做成多副本的叢集，讓它不會「整片同時掛掉」，把「全掛」降級成「掉一部分」，剩下的副本還能頂著，幫你爭取重建的時間。
+
+## 插播：兩個衡量「災難能忍到什麼程度」的指標
+
+聊到災難復原，順手把兩個很實用、面試也常考的指標講白，它們是 **RPO** 和 **RTO**：
+
+- **RPO**（Recovery Point Objective）：**可以容忍丟掉多少資料**，用時間衡量。比如 RPO = 5 分鐘，意思是最壞情況下，你能接受丟掉「最後 5 分鐘」的資料。它決定你要**多久備份／同步一次**——你多久同步一次，最壞就丟多久。
+- **RTO**（Recovery Time Objective）：**可以容忍系統癱瘓多久**，從掛掉到恢復服務的時間上限。它決定你願意為「快速復原」投資多少（熱備援、自動切換都是為了壓低這個數字）。
+
+把它套回我們的系統，你會看到一件很關鍵的事——**同一個系統裡，不同零件的要求天差地別：**
+
+| 零件 | RPO（能容忍丟多少資料） | RTO（能容忍癱多久） |
+|---|---|---|
+| 信箱（快取） | 寬鬆——反正能重算，沒有「資料遺失」問題 | **在乎這個**（多快把服務恢復正常） |
+| 資料庫（真相來源） | **必須很嚴格**——貼文一則都不能丟 | 次要 |
+
+判斷的依據又回到那把老尺：**這份資料是「真相來源」還是「可重算的快取」？** 是真相，就花錢把 RPO 顧好（嚴格備份、絕不丟）；是快取，就主要顧 RTO（掉了沒關係，重點是快點恢復）。
+
+## 壞掉三：那隻怪，第三次來了
+
+最後一個破壞點，回到我們最得意的那個設計——名人的「共享快取」（所有粉絲共讀同一份名人貼文，不複製）。它本身，其實就是一個 **hot key**。
+
+想像某位名人的某則貼文爆紅，他那份共享快取，在幾分鐘內被一億人瘋狂讀取。問題在於：**同一份資料（同一個 key），不管你把 Redis 叢集切成多少片，它永遠只會落在「某一台」機器上。** 於是這一億次讀取，全部砸向**那一台** Redis，把它打爆，而叢集裡其他機器還閒得很。
+
+這次你沒辦法用「切片」來解，因為問題的根源正是「**單一一個 key，沒辦法被切開**」。
+
+這時候我犯過一個錯，值得拿出來講，因為它剛好釐清一個重要分界。我第一個念頭是：「用 Kafka 那條輸送帶當緩衝啊，一億人要讀，沒問題，排隊慢慢給。」
+
+**錯。** Kafka 那種「排隊慢慢處理」的招式，是給**寫入／背景任務**用的——因為發文者可以丟完工單就走、不在乎等。但**讀取不能排隊**：使用者現在打開 App，他要**現在、立刻**看到貼文，你不能跟他說「你的讀取請求已進入佇列，預計 30 秒後送達」，他早就關掉 App 了。
+
+> 記住這條分界，它能幫你少犯很多錯：**Kafka 解決的是「寫入太多、可以延後」的問題；它解決不了「讀取太熱、必須即時」的問題。** 讀取熱點的解法，永遠是往「複製、快取、把資料推到離使用者更近的地方」想，而不是「排隊」。
+
+那讀取熱點正確怎麼解？既然單一 key 打爆單一機器，就**把這個 key 複製成很多份**，讓一億次讀取分散開來：
+
+- **複製唯讀副本**：把那台熱機器做好幾個唯讀分身，讀取流量打散到各分身上。
+- **本地快取**：這招更狠也更巧。爆紅貼文在這幾分鐘內**內容根本不會變**，那為什麼每台 App 伺服器要為了同一份不變的東西，反覆跑去問 Redis？讓**每台 App 伺服器把這份貼文，在自己的記憶體裡也存個幾秒**。這幾秒內，這台機器服務的所有使用者，連 Redis 都不用碰，直接從本機拿。一億次讀取，就這樣被幾百台 App 伺服器的本地記憶體吸收掉絕大部分，真正打到 Redis 的流量被砍掉好幾個數量級。代價只是「資料可能舊幾秒」——對一則爆紅貼文來說，舊幾秒完全無所謂。又是一次**用一點點一致性，換巨大的規模**。
+
+<svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="hot key 在寫入、工人、讀取三個面向各咬一口，是同一隻怪換三層皮">
+<defs><marker id="c3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#d85a30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="210" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<text x="130" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">① 寫入爆炸</text>
+<text x="360" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">② 工人爆炸</text>
+<text x="590" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a8341a" font-family="sans-serif">③ 讀取爆炸</text>
+<rect x="70" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="130" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">名人發文</text>
+<rect x="300" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="360" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">名人發文</text>
+<rect x="530" y="52" width="120" height="40" rx="8" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="590" y="77" text-anchor="middle" font-size="12.5" fill="#23221f" font-family="sans-serif">爆紅貼文</text>
+<line x1="130" y1="92" x2="130" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<line x1="360" y1="92" x2="360" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<line x1="590" y1="92" x2="590" y2="112" stroke="#d85a30" stroke-width="1.5" marker-end="url(#c3)"/>
+<rect x="60" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="130" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">投遞 3000 萬信箱</text>
+<rect x="290" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="360" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">灌爆背景工人</text>
+<rect x="520" y="114" width="140" height="44" rx="8" fill="#f8eae5" stroke="#d85a30"/>
+<text x="590" y="141" text-anchor="middle" font-size="12.5" font-weight="600" fill="#a8341a" font-family="sans-serif">打爆單一機器</text>
+<text x="360" y="188" text-anchor="middle" font-size="12.5" fill="#6b6a64" font-family="sans-serif">同一隻怪：極少數超熱的東西，拖垮整條路徑</text>
+</svg>
+
+*圖：hot key 在這個系統現身三次——寫入、背景工人、讀取，各被咬一口。*
+
+到這裡，請你回頭數一數：這隻叫 **hot key** 的怪，在這個系統裡出現了**三次**：
+
+- Part 1，名人發文要投遞幾千萬個信箱，把**寫入**打爆。
+- Part 2，名人若走背景投遞，會把**工人**灌爆。
+- 這一篇，名人的共享快取被爆紅貼文讀爆，把**讀取**打爆。
+
+同一個本質——「極少數超熱的東西，拖垮整條路徑」——在寫入、任務、讀取三個面向，各咬你一口。而對付它的招式（隔離、複製、本地快取、把 key 打散），其實是同一套。**這就是我做這整個系列最想傳達的事：你學的不該是「動態消息的解法」，而是一組會在無數場景反覆出現的底層模式。** 認得出「啊，這又是 hot key」的那一刻，你就不再是背題，而是真的開始會設計系統了。
+
+## 三篇走完，我們其實學了什麼
+
+從一句最直覺、卻會崩潰的 SQL 出發，我們一步一步走到了一個扛得住規模、不卡使用者、連壞掉都能優雅退化的設計。但如果你問我這三篇最該帶走什麼，絕對不是那張最終的架構圖。是這套思考的節奏：
+
+> **先做出一個能動但會壞的笨版本 → 找到它第一個撐不住的地方 → 只針對那個瓶頸，加一層 → 然後反過來問：這一層壞掉了會怎樣？**
+
+這套節奏沒有一個步驟是「背」來的，每一步都有逼著它發生的具體理由。而且它可以跨領域遷移——它跟我之前寫視訊系統從 1:1 到 Mesh、再到 SFU 的那條線，是同一套東西。換成短網址、即時通訊、線上協作，骨架都一樣。
+
+最後講點私心的反思。練完這一整題，我自己最大的收穫有三個：一是「找瓶頸再加東西」這個習慣，慢慢從「需要提醒」變成「反射動作」；二是開始會在不同題目之間看見同一個模式（像那隻三次現身的 hot key）；三是——這個我還在練——回答問題時，要先收束到「這件事的**本質**是什麼」，再展開講「**手段**」。像 Redis 掛掉那題，該先說清楚「信箱是快取、所以這是效能災難」，再講怎麼重建；先講本質、再講手段，整個推理會清楚得多。
+
+如果這個「不背架構、而是一步步推導架構」的系列對你有幫助，那它的目的就達到了。之後我還會用同一套方法，去拆別的系統——下次見。
+
+---
+
+*「動態消息系統設計」系列完。從這裡進來的話，建議從 [Part 1](/zh/blog/news-feed-system-design-part-1) 開始，整條推導會更有感覺。*

@@ -1,0 +1,94 @@
+---
+title: "在動手畫架構之前：我拆系統設計題的五拍框架，與八條心法"
+date: "2026-06-28"
+description: "這是『動態消息系統設計』系列的導讀。在帶你親手推導一個動態消息系統之前，我想先把那套『方法』單獨拎出來講——一道題會忘，但這套五拍框架與八條心法換任何題都能套用。它不綁定 news feed：短網址、即時通訊、線上協作，骨架都一樣。"
+tags: ["系統設計", "系統架構", "分散式系統", "工程思考", "學習方法"]
+category: "system-design"
+series: "news-feed-system-design"
+order: 0
+---
+
+> 這是「動態消息系統設計」系列的**第 0 篇 · 導讀**。後面三篇會帶你從一句崩潰的 SQL，一路推導出 Twitter / Instagram 那種首頁時間軸的核心架構。但在進去之前，我想先把推導用的那套**方法**單獨講清楚——因為一道題會忘，方法不會。
+>
+> 也先誠實說一句：這整個系列是一場**設計推演**，不是我真的蓋了一個 Twitter。它比較像面試白板上、或一個人對著紙推敲的過程。對我自己、對你來說，真正有價值的從來不是答案，而是「為什麼會走到這個答案」。
+
+## 為什麼先講方法，而不是先講題目
+
+練系統設計練到一個階段，我發現一件事：**讓人贏的從來不是「知道答案」，而是「有一套穩定的拆題節奏」。**
+
+網路上「Twitter feed 怎麼設計」的文章成千上萬，現在 AI 一問就有一張最終架構圖。如果你會的只是那張圖，你跟那些文章沒有差別，而且你會在面試官追問「為什麼這裡要加快取」時當場卡住。真正稀缺、複製不走的，是**那條推理鏈**——為什麼非加這一層不可、瓶頸到底爆在哪、哪個直覺一開始就是錯的。
+
+這篇就是把那條推理鏈背後的「框架」與「心法」先攤開。你可以把它當成整個系列的地圖；後面每一篇，都是這張地圖在一道具體題目上的展開。
+
+## 一把尺：這個問題會不會「fork 架構」
+
+聽到一個模糊的系統設計題，第一件事**不是畫架構**，而是問清楚範圍。但問題有好壞之分，我用這把尺來判斷一個問題值不值得先問：
+
+> **這個問題會不會 fork 架構？** 不同的答案會導向**不同形狀的系統**的，才值得先問；只影響前端呈現的（一次載幾筆、圖片解析度、留言怎麼排），是細節，不是驅動。
+
+舉例：一頁載 20 筆還是 50 筆，後端都是同一支 API，不會分岔出兩種設計——這是細節。但「使用者有多少」「平均追蹤幾個人」「讀和寫差幾倍」「新貼文要不要即時可見」，答案不同，整個系統就會長成完全不同的樣子——這才是該先釘死的。
+
+**先看會改變架構的宏觀數字，再看畫面的細節。** 這是拆任何一題的第一個動作。
+
+## 五拍框架：每一道題都照這條路走
+
+釐清完範圍，剩下的流程我固定走五拍。它不是什麼祕訣，但把它變成肌肉記憶後，你在白板前就不會慌。
+
+<svg viewBox="0 0 720 130" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="五拍框架：釐清需求、估算規模、高層設計、深挖瓶頸、失敗取捨，依序進行">
+<defs><marker id="p0a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8a887f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="720" height="130" rx="16" fill="#fbfaf7" stroke="#eee7da"/>
+<rect x="24" y="40" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="83" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">第 1 拍</text>
+<text x="83" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">釐清需求</text>
+<rect x="160" y="40" width="118" height="56" rx="9" fill="#f1efe8" stroke="#d8d4cb"/>
+<text x="219" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">第 2 拍</text>
+<text x="219" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#23221f" font-family="sans-serif">估算規模</text>
+<rect x="296" y="40" width="118" height="56" rx="9" fill="#e4f3ee" stroke="#1d9e75"/>
+<text x="355" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#0f6e56" font-family="sans-serif">第 3 拍</text>
+<text x="355" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#0f6e56" font-family="sans-serif">高層設計</text>
+<rect x="432" y="40" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="491" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#a8341a" font-family="sans-serif">第 4 拍</text>
+<text x="491" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a" font-family="sans-serif">深挖瓶頸</text>
+<rect x="578" y="40" width="118" height="56" rx="9" fill="#f8eae5" stroke="#d85a30"/>
+<text x="637" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#a8341a" font-family="sans-serif">第 5 拍</text>
+<text x="637" y="83" text-anchor="middle" font-size="14" font-weight="600" fill="#a8341a" font-family="sans-serif">失敗取捨</text>
+<line x1="142" y1="68" x2="158" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="278" y1="68" x2="294" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="414" y1="68" x2="430" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+<line x1="550" y1="68" x2="576" y2="68" stroke="#8a887f" stroke-width="1.5" marker-end="url(#p0a)"/>
+</svg>
+
+*圖：每道系統設計題都照這條路走——釐清 → 估算 → 設計 → 深挖 → 失敗。*
+
+- **第 1 拍｜釐清需求**：用上面那把「會不會 fork 架構」的尺，把規模、讀寫比、一致性／延遲容忍度這幾個真正的勝負手問清楚。
+- **第 2 拍｜估算規模**：把每天的總量除以一天的秒數，抓個大概（工程上叫 back-of-the-envelope，信封背面隨手一算）。不用精準，**抓對數量級**就好——常常一個比例（例如讀比寫多 100 倍）就決定了整題的轉軸。
+- **第 3 拍｜高層設計**：先做一個最笨、能動但會壞的版本（我習慣叫它 V0），讓它親手把瓶頸爆給你看；再針對瓶頸演進到 V1、V2。
+- **第 4 拍｜深挖瓶頸**：把選定的那條路收尾——資料放哪、用什麼結構、怎麼非同步、怎麼保證不丟。
+- **第 5 拍｜失敗取捨**：故意把零件一個個敲壞，問「它壞了會怎樣、系統能不能優雅退化」。這一拍最能分出高下。
+
+## 八條核心心法
+
+題目會忘，心法不會。下面這八條，是我從一道道題裡萃出來、換任何題都能套用的底層直覺。你現在可以先掃過去，等讀完後面三篇，再回頭看一次——你會發現每一條都在那三篇裡至少被觸發過一次。
+
+1. **瓶頸驅動**：沒有瓶頸就不加元件。一開口倒出所有元件＝扣分，因為對方無法分辨你是真懂、還是在背清單。每加一層，都要有一個具體的瓶頸逼你加。
+2. **工從讀搬到寫**：當讀、寫的頻率差一個數量級時，把昂貴的計算挪到頻率低的那一側。算一次、存起來，之後直接拿現成的。
+3. **不用單一方案**：99.9% 的長尾走便宜的路，0.0x% 的 hot key 走特別的路。用一種方法硬解所有情況，通常就是災難的起點。
+4. **挑對分流維度**：要分流，就選穩定、可預測、且直接對應成本來源的指標（例如粉絲數），不要選會劇烈抖動的（例如某次寫入耗時）。
+5. **無狀態擴展**：壓力被你解開後不會消失，只會流到下一個最弱的環節——通常是有狀態的儲存層，那才是真正的天花板。無狀態的負責擴展、有狀態的負責守底線。
+6. **一致性定生死**：同一個延遲，在「最終一致」的系統是可容忍的退化，在「強一致」的系統是致命錯誤。差別不在技術，在這個系統對一致性的容忍度。
+7. **共享不複製**：凡是會被大量人重複讀到的東西，抽出來存一份大家共享，絕不複製。
+8. **笨方法不死**：早期那個被你嫌棄的笨設計，很少真的是錯的——它只是不該放在熱路徑上，但它幾乎永遠是你最後的保險絲。
+
+## 這套東西，不只用在這一題
+
+我想強調的是：上面這些，**沒有一條是「動態消息」專屬的**。
+
+「先做笨版本、找到第一個上限、改變模型而不是把機器開大」這條路線，我在寫視訊系統時就走過一模一樣的一遍——[從多人撞上 Mesh 的上限](/zh/blog/webrtc-poc-2-mesh-limit)，再[從 Mesh 演進到 SFU](/zh/blog/webrtc-poc-4-sfu-scale)。心法 5 的「無狀態擴展、有狀態守底線」，更是我那篇[水平擴展有狀態的 SFU](/zh/blog/scaling-stateful-sfu-with-room-affinity) 整篇在處理的事。換成短網址、即時通訊、線上協作，骨架都一樣。
+
+**這是一種可以跨領域遷移的思考方式**，而這個系列想做的，就是把它一篇一篇練成你的直覺。
+
+接下來就進正題。[Part 1](/zh/blog/news-feed-system-design-part-1) 從一句最自然、卻會在規模下崩潰的 SQL 出發，我們一起看它為什麼非演進不可。
+
+---
+
+*這是「動態消息系統設計」系列的導讀篇。如果你想直接看推導，可以跳到 [Part 1](/zh/blog/news-feed-system-design-part-1)；但讀完正文後，很建議回來再看一次上面那八條心法。*
