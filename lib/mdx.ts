@@ -42,7 +42,8 @@ function isPublished(date: string) {
   if (shouldIncludeFuturePosts()) return true;
   if (!date) return true;
 
-  const publishedAt = new Date(`${date}T23:59:59.999Z`);
+  // Publish at the start of the given day in Taiwan time (UTC+8).
+  const publishedAt = new Date(`${date}T00:00:00+08:00`);
   if (Number.isNaN(publishedAt.getTime())) return true;
 
   return publishedAt.getTime() <= Date.now();
@@ -130,6 +131,21 @@ export function getPost(slug: string, locale: string): Post | null {
     order: typeof data.order === 'number' ? data.order : undefined,
     content,
   };
+}
+
+/**
+ * Publication status of a blog post by slug — used to guard in-content links.
+ * In-body markdown links bypass the `isPublished` filtering that lists and
+ * series navigation get, so a hand-written cross-link can point at a post whose
+ * publish date hasn't arrived yet and 404. `'missing'` is reported separately
+ * from `'unpublished'` so genuine broken links stay visible rather than being
+ * silently masked as plain text.
+ */
+export function blogPostStatus(slug: string, locale: string): 'published' | 'unpublished' | 'missing' {
+  const filePath = path.join(getDir('blog', locale), `${slug}.mdx`);
+  if (!fs.existsSync(filePath)) return 'missing';
+  const { data } = matter(fs.readFileSync(filePath, 'utf-8'));
+  return isPublished(data.date ?? '') ? 'published' : 'unpublished';
 }
 
 /** Posts for a locale carrying the given tag (case-insensitive match). */

@@ -6,6 +6,7 @@ import { getCaseStudy, getAllCaseStudies } from '@/lib/mdx';
 import { MDXRemote } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
 import { Tag } from '@/components/ui/Tag';
+import { mdxComponents } from '@/components/blog/MdxLink';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { caseStudySchema, breadcrumbSchema } from '@/lib/structured-data';
 import { siteConfig } from '@/lib/site';
@@ -120,6 +121,7 @@ function CaseStudyContent({
       ">
         <MDXRemote
           source={post.content}
+          components={mdxComponents}
           options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
         />
       </article>

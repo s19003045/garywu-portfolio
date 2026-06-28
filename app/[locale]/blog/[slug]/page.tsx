@@ -9,6 +9,7 @@ import remarkGfm from 'remark-gfm';
 import { Tag } from '@/components/ui/Tag';
 import { SeriesNav } from '@/components/blog/SeriesNav';
 import { RelatedPosts } from '@/components/blog/RelatedPosts';
+import { mdxComponents } from '@/components/blog/MdxLink';
 import { tagHref } from '@/lib/tags';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { articleSchema, breadcrumbSchema } from '@/lib/structured-data';
@@ -141,6 +142,7 @@ function PostContent({
       ">
         <MDXRemote
           source={post.content}
+          components={mdxComponents}
           options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
         />
       </article>
