@@ -31,7 +31,7 @@ const TECH_TAGS = new Set<string>([
   'opencv', 'openai api', 'google vision ai', 'ai agent',
   'llm', 'rag', 'chatbot', 'line api', 'github api',
   // Infra / devops
-  'docker', 'nginx', 'pm2', 'linux', 'alpine linux', 'git', 'github',
+  'docker', 'docker compose', 'nginx', 'apache', 'php', 'pm2', 'linux', 'alpine linux', 'git', 'github',
   // Web3 / storage
   'ipfs', 'web3 / ipfs', 'web3',
   // Integrations / misc

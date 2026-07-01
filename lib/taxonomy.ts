@@ -20,6 +20,7 @@ export const CATEGORY_KEYS = [
   'go-notes',
   'webrtc-system',
   'system-design',
+  'devops',
   'ai-collaboration',
   'career',
 ] as const;

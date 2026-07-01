@@ -1,0 +1,573 @@
+---
+title: "An nginx User's Cross-Stack Migration Notes: Moving a PHP 5.6 Project onto Docker + Apache"
+date: "2026-07-01"
+description: "I know nginx well but had barely touched Apache or PHP — yet I had to take a PHP 5.6 project running on an ancient CentOS box, turn it into Docker Compose, and deploy it on a new host. Debugging it station by station along the request path — reverse proxy, sub-path prefix, .htaccess permissions, container-to-host database — and distilling it into a debugging methodology you can take anywhere."
+tags: ["Apache", "PHP", "Docker", "Docker Compose", "Reverse Proxy", "Legacy Migration", "Deployment"]
+category: "devops"
+---
+
+> A client needed me to take a PHP 5.6 project running on an old CentOS box, containerize it into Docker Compose, and deploy it on a new Linux host. The hard part wasn't only the tech itself — PHP 5.6 is long past end-of-life, there were no tests to lean on, and my home turf is React, TypeScript, Node.js, nginx, Docker, with Apache2 and PHP close to untouched. This post records how I **mapped unfamiliar tech onto mental models I already had and located problems systematically along the request path** — and in the end, not just got it live but distilled a debugging method that transfers to any system. More than "I made it work," this is about "**I know why it works**."
+>
+> The domains, credentials, and internal IPs in this post are all de-identified. The assumption is that you, like me, know nginx well but have never touched Apache and aren't fluent in PHP either.
+
+For readers in a hurry, here's the whole picture: this was a **production legacy migration** — moving an EOL PHP 5.6 / mod_php project off an old CentOS box into a `php:5.6-apache` container, orchestrated with Docker Compose, sitting behind the host Apache's TLS reverse proxy; the database is the production MariaDB on the host, shared with other projects; plus a Next.js (Payload CMS) that had to mount on a sub-path. The whole vague "the frontend gets nothing" symptom turned out to have **four root causes at four different layers**, and pinning them down came not from guessing but from a systematic, outside-in walk along the request path.
+
+---
+
+## 1. The whole system: a request-path map
+
+Let's build a map first. When a user types a URL in the browser, every station the request passes through on its way to the screen is a place where something can go wrong:
+
+```
+Browser
+  │  https://app.example.com/legacyapp/
+  ▼
+Host Apache2 (TLS termination + reverse proxy)     ← Gate 1
+  │  http://127.0.0.1:8080/legacyapp/
+  ▼
+Container Apache (php5.6-apache image)             ← Gate 2: DocumentRoot / prefix
+  │
+  ▼
+.htaccess (Basic Auth + IP allowlist)             ← Gate 3: access control
+  │
+  ▼
+mod_php → runs index.php (Server-Side Render)
+  │
+  ▼
+MariaDB (on the host, shared with other projects)  ← Gate 4: container → host connection
+```
+
+The point of this diagram: **this is a "chain," and if any link breaks, the frontend gets nothing.** And "the frontend gets nothing" is a symptom you almost can't locate by staring at code — you have to walk this chain, confirming station by station where the request reached and where it broke. That's the baseline for everything that follows.
+
+My initial symptom was: open the URL and **not even the box asking for a username and password shows up** — just a blank page or a 404. As you'll see, this single symptom can have root causes in completely different spots on the map.
+
+---
+
+## 2. Background one: an Apache crash course for nginx users
+
+If you know nginx, Apache's concepts map onto it almost one-to-one — it's just that the look, and the mechanism for "how configuration gets loaded," differ a lot. This section lays the foundation so the config files later make sense.
+
+### 2.1 Syntax: nginx uses braces, Apache uses XML-like tags
+
+nginx config is nested braces, with a semicolon at the end of each line:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+    root /var/www/html;
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080/;
+    }
+}
+```
+
+Apache config is "directives + XML-like block tags," **no trailing semicolons**, and blocks are wrapped in `<Tag>...</Tag>`:
+
+```apache
+<VirtualHost *:443>
+    ServerName app.example.com
+    DocumentRoot /var/www/html
+    ProxyPass /api/ http://127.0.0.1:8080/
+</VirtualHost>
+```
+
+### 2.2 Concept mapping
+
+| nginx you know | Apache equivalent | Notes |
+|---|---|---|
+| `server { }` | `<VirtualHost>` | One virtual host |
+| `location /path { }` (URL) | `<Location "/path">` | Matches by **URL** |
+| (no direct nginx equivalent) | `<Directory "/fs/path">` | Matches by **filesystem path** |
+| `root` | `DocumentRoot` | Site root directory |
+| `proxy_pass` | `ProxyPass` + `ProxyPassReverse` | Reverse proxy (Apache needs two lines) |
+| `nginx -t` | `apache2ctl configtest` | Syntax check |
+| `nginx -s reload` | `systemctl reload apache2` | Reload |
+| Modules mostly compiled in | `a2enmod xxx` (dynamic load) | Apache modules must be "enabled" |
+| (none) | `.htaccess` | Per-directory, read **at request time** |
+
+Two Apache concepts have no direct nginx counterpart and are worth memorizing.
+
+**First: modules must be "enabled."** Common nginx modules are usually already there at compile time; Apache, by contrast, is a pile of `.so` dynamic modules, and you have to enable whichever one you use. Reverse proxy needs `a2enmod proxy proxy_http`, rewrite needs `a2enmod rewrite`, SSL needs `a2enmod ssl`, changing headers needs `a2enmod headers`. **Use a module's directive without enabling it, and Apache reports "Invalid command" straight away.** This is the first wall newcomers hit.
+
+**Second: this thing called `.htaccess`.** This is Apache's special "per-directory config file": you can drop a `.htaccess` into some folder of your site, and Apache reads it **on every request** and applies the rules inside (URL rewriting, adding auth, …). nginx has no such "at-request-time, scattered across directories" mechanism — nginx config is centralized and read once at startup. `.htaccess` is convenient (change it, no reload needed), but it has one crucial switch, `AllowOverride`, which becomes the star of Gate 3.
+
+### 2.3 The "enabling" mechanism: sites-available / sites-enabled
+
+On Debian/Ubuntu-flavored Apache, config lives in `/etc/apache2/`, structured like this:
+
+```
+/etc/apache2/
+├── apache2.conf          # Main config (loads everything below)
+├── ports.conf            # Which ports to listen on
+├── mods-available/       # All "available" modules
+├── mods-enabled/         # "Enabled" modules (symlinks back to available)
+├── conf-available/       # Available config fragments
+├── conf-enabled/         # Enabled config fragments
+├── sites-available/      # All "available" site configs
+└── sites-enabled/        # "Enabled" sites (symlinks)
+```
+
+This "available / enabled" split is almost identical to nginx's `sites-available` + `sites-enabled` symlink pattern. The difference is Apache gives you a set of tools to create the symlinks: `a2ensite` (enable a site), `a2dissite` (disable), `a2enmod` / `a2enconf`.
+
+And what **actually decides "which files get loaded"** is those few lines at the end of `apache2.conf`:
+
+```apache
+IncludeOptional mods-enabled/*.load
+IncludeOptional mods-enabled/*.conf
+Include ports.conf
+IncludeOptional conf-enabled/*.conf
+IncludeOptional sites-enabled/*.conf
+```
+
+Note that glob: `sites-enabled/*.conf`. **Only files ending in `.conf` get loaded.** Remember this line, because it's the culprit behind my very first bug.
+
+### 2.4 Three debugging commands you'll use every day
+
+```bash
+apache2ctl configtest   # Syntax check (like nginx -t)
+apache2ctl -S           # Print "which VirtualHosts are actually loaded, on which port"
+apache2ctl -M           # Print "which modules are actually loaded"
+```
+
+`apache2ctl -S` is the single most important command in this entire article. Because Apache has too many "the config file exists but isn't actually loaded" traps, you can't just look at file contents and believe it's in effect — you have to ask Apache "what did you **actually** load."
+
+---
+
+## 3. Background two: how does a PHP project run? From browser to screen
+
+If, like me, you come from a frontend/Node background, the most foreign thing about a PHP project is its execution model. This section makes the whole "from browser request to screen" flow clear.
+
+### 3.1 What is "Server-Side Render"
+
+Modern frontends (React/Vue) are mostly **SPAs**: the server throws a bundle of JS at the browser, the browser runs the JS and "paints" the screen on the client side (client-side render).
+
+Traditional PHP is the opposite: **the HTML is assembled on the server.** The browser asks for `index.php`, the PHP interpreter on the server **runs this program on the spot** — the program may query a database, run loops, stitch data into an HTML string, and finally throw **a complete HTML document** back to the browser. What the browser receives is ready-made HTML, displayed directly. That's server-side render.
+
+One key difference: a `.php` file **is not a static file**. When you request `/index.php`, Apache doesn't hand the file over untouched the way it does an image — it hands the file to PHP to execute, and what it sends out is the **result** of execution. But the `.css`, `.js`, `.png` in the same site are static files, and Apache serves the file contents directly, with PHP not involved at all.
+
+### 3.2 *How* does PHP get executed inside Apache? mod_php vs PHP-FPM
+
+There are two common architectures:
+
+- **mod_php**: the PHP interpreter is compiled as a module of Apache, living directly inside Apache's worker processes. The moment Apache sees a `.php`, it runs it within its own process. Simple to set up; it's the default in many old projects, and also in the official `php:5.6-apache` Docker image.
+- **PHP-FPM**: PHP runs as a separate process pool, and Apache/nginx "forwards" `.php` requests to it over the FastCGI protocol. This is the more mainstream approach today, with better performance and isolation (nginx can only do it this way, because nginx has no mod_php).
+
+My project uses `php:5.6-apache`, i.e. **mod_php**. Knowing this matters: it means PHP's behavior is governed directly by the Apache inside the container, and those `.htaccess` rules are read by that same Apache.
+
+### 3.3 The full flow: one request is really many requests
+
+A user opens `https://app.example.com/legacyapp/`. It looks like one action, but behind it is a chain of round trips:
+
+1. The browser sends `GET /legacyapp/`.
+2. The request passes through the reverse proxy to the container Apache.
+3. The URL ends in `/` (a directory), so Apache finds `index.php` via `DirectoryIndex`.
+4. `.htaccess` kicks in: authentication first (no credentials → return `401`, browser pops up the login box; with correct credentials → let through).
+5. mod_php runs `index.php`: queries MariaDB, assembles the HTML, returns it.
+6. The browser receives the HTML and starts parsing. It reads `<link href="css/app.css">`, `<script src="js/app.js">`, `<img src="...">` — **each of which fires another request**.
+7. These sub-requests are mostly static files, and Apache serves them directly (no PHP).
+8. The JS on the page may then use AJAX/fetch to hit other `.php` (e.g. fetching map data, search results) — **another round of round trips**.
+9. All resources arrive, and the browser finishes rendering.
+
+Step 6 is the key to understanding "the frontend gets nothing": **the main HTML coming back does not mean the whole page is fine.** If those `css`/`js` sub-request paths don't line up, the layout falls apart. Gate 2 is exactly about this.
+
+### 3.4 How does PHP 5.6 differ from newer versions? Why are old projects stuck on 5.6
+
+PHP 5.6 is a 2014 release, long since end-of-life. Compared with 7.x / 8.x, a few key differences:
+
+- **Performance**: PHP 7.0 heavily reworked the execution engine (the Zend Engine), and the same code often runs more than twice as fast; 8.0 added a JIT on top. 5.6 is clearly behind here.
+- **Old database functions removed**: many legacy PHP projects use `mysql_query()` and other `mysql_*` functions (note: not `mysqli`). This set was deprecated in 5.5 and **removed entirely in 7.0**. This is the most painful gate in upgrading an old project — you have to rewrite the entire database access layer to `mysqli` or `PDO`.
+- **Syntax and types**: only 7.x has scalar type declarations (`function f(int $x): string`) and the null coalescing operator `??`; 7.4 has arrow functions and typed properties; 8.0 has union types, named arguments, `match`, constructor property promotion, and the nullsafe `?->`; 8.1 has enums. 5.6 has none of these.
+- **Error handling**: 7.x turned many fatal errors into catchable `Error` exceptions.
+
+**Why stuck on 5.6?** Usually it's not that they don't want to upgrade, but that upgrading is costly: the code is littered with removed functions and old idioms, so bumping the version blows up everywhere — and there are often no tests to protect a refactor. For a project like this, **"containerize it as-is first and just get it running on a modern host" is more pragmatic than "migrate and rewrite at the same time"** — and that was the first step I deliberately chose this time: split "make it run" from "upgrade it" so I only carry one kind of risk at a time.
+
+> A side note: when you containerize an old image like 5.6, the `apt` sources are often already dead, so you'll see the Dockerfile point sources at `archive.debian.org` and disable certificate checks. That's the norm when hauling antiques around — it doesn't mean you did anything wrong.
+
+---
+
+## 4. Gate 1: reverse proxy — why not even the login box shows up
+
+### Background
+
+The host already had an Apache serving this domain directly. Now the app moves into a container, and only the container's port 80 is mapped to the host's `8080`. So the host Apache's role has to change from "serve files directly" to "**reverse proxy**" — forwarding public-domain traffic to `127.0.0.1:8080`. For an nginx user, this is the utterly familiar `proxy_pass`, just swapped for Apache's `ProxyPass`.
+
+I wrote a `:443` VirtualHost accordingly, and its contents were actually completely correct:
+
+```apache
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerName app.example.com
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/app.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/app.example.com/privkey.pem
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+
+    ProxyPass        / http://127.0.0.1:8080/
+    ProxyPassReverse / http://127.0.0.1:8080/
+</VirtualHost>
+</IfModule>
+```
+
+`apache2ctl configtest` returned `Syntax OK`, and I restarted. But the site just wouldn't show even the login box.
+
+### Diagnosis
+
+For a while I thought I'd written the proxy rules wrong. But the real problem was one layer further out — in the **filename**. Listing `sites-enabled/`:
+
+```
+000-default.conf@                 -> ../sites-available/000-default.conf
+app.example.com.conf2@            -> ../sites-available/app.example.com.conf2
+app.example.com-le-ssl.conf2@     -> ../sites-available/app.example.com-le-ssl.conf2
+```
+
+See the `.conf2`? The endings are `.conf2`, not `.conf`.
+
+Recall that line from Background one: `IncludeOptional sites-enabled/*.conf`. The glob `*.conf` requires filenames ending in `.conf`, and `.conf2` ends in `2`. **Apache never read those two files at all.** They exist, they're symlinks, their syntax is even correct — but as far as Apache is concerned, they don't exist.
+
+This also explains the illusion: `configtest` returned `Syntax OK` not because my proxy config passed the check, but because **Apache never read it** — it can't report a syntax error for a file it didn't load.
+
+`apache2ctl -S` blows the cover:
+
+```bash
+$ apache2ctl -S
+VirtualHost configuration:
+*:80    app.example.com (/etc/apache2/sites-enabled/000-default.conf:1)
+# ← only 000-default; my two proxy vhosts don't appear at all
+```
+
+### Fix
+
+Rename the files back to the standard `.conf` and re-enable:
+
+```bash
+cd /etc/apache2/sites-available
+mv app.example.com.conf2        app.example.com.conf
+mv app.example.com-le-ssl.conf2 app.example.com-le-ssl.conf
+
+# Remove the old .conf2 symlinks and create the right ones with a2ensite
+rm /etc/apache2/sites-enabled/app.example.com*.conf2
+a2ensite app.example.com.conf app.example.com-le-ssl.conf
+a2enmod proxy proxy_http ssl rewrite   # don't forget the proxy modules
+
+apache2ctl configtest && systemctl reload apache2
+apache2ctl -S      # this time you should see your domain on both :80 and :443
+```
+
+> A small trap: after the filename is right and the file is actually loaded this time, `configtest` may instead start complaining `Invalid command 'ProxyPass'`. Don't panic — it's telling you `mod_proxy` isn't enabled yet; just add `a2enmod proxy proxy_http`. In other words, **this time's `configtest` is the one really checking your proxy config**, completely different from that earlier fake `Syntax OK`.
+
+### The takeaway
+
+> **Existing ≠ in effect.** A 100%-correct config can have zero effect simply because Apache never included it. And it fails **silently** — no stack trace, just an innocent-looking `Syntax OK`. From now on, for any config system, ask first: "was this file actually read?" Use `apache2ctl -S` to ask "what's actually loaded" — don't just look at the file contents and believe.
+
+(I later hit two variations on this rule: an `httpd.conf` hauled over from the old CentOS box was mounted into the Debian container, but Debian's `apache2.conf` never includes it — and its `ServerRoot "/etc/httpd"`, `User apache` were CentOS conventions that, if actually loaded, would keep the container from starting. "Mounted in ≠ loaded." Same lesson, three times.)
+
+---
+
+## 5. Gate 2: DocumentRoot and the sub-path prefix
+
+This gate is the most maddening part of reverse proxying, and the one that best tests "how the frontend obtains resources." nginx users aren't strangers to it — it's the old trailing-slash trap of `proxy_pass`, only this time you're forced to see the underlying mechanics.
+
+### Background: DocumentRoot and the URL → file mapping
+
+`DocumentRoot` is nginx's `root`: the site root directory. In the container my `DocumentRoot` was set to `/var/www/html/legacyapp_src` (the app sits under it, with `index.php` right inside). So from the container's view:
+
+- URL `/` → `/var/www/html/legacyapp_src/` (→ `index.php`)
+- URL `/webgis/` → `/var/www/html/legacyapp_src/webgis/`
+
+At first I mounted the app at the **public root** (`ProxyPass / → :8080/`), so `https://app.example.com/` worked. But the client wanted it under a **sub-path**, `/legacyapp/`. That's where the trouble started.
+
+### Symptom: trailing slash or not makes a world of difference
+
+I changed the proxy to `ProxyPass /legacyapp/ http://127.0.0.1:8080/` (source prefix `/legacyapp/` mapped to the target's `/`, i.e. **stripping the prefix**). Then I hit:
+
+```
+https://app.example.com/legacyapp/webgis?lang=zh_TW   ← note: no slash after webgis
+```
+
+The result was a redirect to `https://app.example.com/webgis/?lang=zh_TW` (**the prefix is gone**), ending in `Not Found`.
+
+### Diagnosis: once the prefix is stripped, the container doesn't know it lives under a sub-path
+
+Step by step:
+
+1. The host Apache strips the `/legacyapp/` prefix, and what enters the container is `/webgis`.
+2. The container sees `/webgis` is a **directory**, and Apache's `mod_dir` responds to a "points at a directory but has no trailing slash" request with a `301`, telling the browser to use the slashed `/webgis/`.
+3. **Here's the trap**: the container has no idea it's mounted under `/legacyapp/` (the prefix was gone back in step 1), so the redirect target it generates by adding the slash is `/webgis/`, **without the prefix**.
+4. The browser follows this 301 to `/webgis/`, which doesn't match `/legacyapp/`, falls back to the host's own DocumentRoot → not found → `404`.
+
+Root cause in one sentence: **once the prefix is stripped at the proxy layer, every "self-referential URL" the container produces — the added-slash redirect, the `Location` jump, the absolute links in the HTML — all lose the prefix, and then get lost en masse.**
+
+This is precisely the heart of "how the frontend obtains resources." What decides success or failure is really one question: **how are this app's resource links written?**
+
+- **Relative paths** (`href="css/app.css"`): the browser resolves them against the current URL `.../legacyapp/` → hit → ✅
+- **Absolute paths that carry the prefix** (`/legacyapp/css/app.css`): aligned all the way → ✅
+- **Root-absolute paths without the prefix** (`/css/app.css`): the browser fetches `.../css/...` (the public root) → not under `/legacyapp/` → ❌ styles drop
+
+### Fix: don't strip the prefix — keep it end to end
+
+Rather than wrestle with "stripping the prefix," the correct fix is to **keep the prefix end to end**, so the container also lives under `/legacyapp/`. That way the added slash, `Location`, and absolute links all align automatically. Two places to change.
+
+**First, the host vhost: change the proxy to not strip the prefix** (both sides use the same path):
+
+```apache
+ProxyPass        /legacyapp  http://127.0.0.1:8080/legacyapp
+ProxyPassReverse /legacyapp  http://127.0.0.1:8080/legacyapp
+```
+
+**Second, the container Apache: use `Alias` to map the URL prefix to the app directory.** **I deliberately don't touch the official image; instead I mount a config into a `conf-enabled/` that will be loaded** (remembering Gate 1's lesson) — minimally invasive, reproducible, and not lost on the next version bump:
+
+```apache
+# landdec-alias.conf  →  mounted to the container's /etc/apache2/conf-enabled/landdec-alias.conf
+Alias /legacyapp /var/www/html/legacyapp_src
+
+<Directory /var/www/html/legacyapp_src>
+    AllowOverride All
+    Require all granted
+</Directory>
+```
+
+`Alias` "maps a URL prefix segment to a filesystem path" — you don't have to move the whole DocumentRoot. `AllowOverride All` is a must, otherwise the app's `.htaccess` (the next gate's auth, plus the rewrite that turns `/foo` into `/foo.php`) stops working.
+
+Verify from the inside out, one step at a time:
+
+```bash
+# 1. Hit the container directly (bypass the host) to confirm it now knows the prefix
+curl -I http://127.0.0.1:8080/legacyapp/          # expect 401 (auth in effect)
+curl -I -u webuser:'********' http://127.0.0.1:8080/legacyapp/webgis
+#   expect 301, and the Location this time "carries" the /legacyapp/ prefix ← the exact bit that was broken and is now fixed
+
+# 2. Then change the host vhost, reload, and finally test the full chain from the browser
+```
+
+### An easily misjudged wrap-up: the ghost of the 301 cache
+
+After fixing it, I tested everything fine in an incognito window, but tested it in **the browser that had gone through the old config**, and it was still a 404. The only difference: that browser remembered the old you.
+
+A `301` is **Moved Permanently**, and browsers **cache it** — for a long time, and stubbornly. So sitting in the old browser was still a record of "`/legacyapp/webgis` → permanently moved to `/webgis/`," and it doesn't even ask the server, just sends you straight to the wrong place. The incognito window has no such historical baggage; it asks fresh every time, so it gets the correct result.
+
+**This 404 comes from the browser's memory, not the server.** How to verify: open devtools → Network and see whether that request is marked `301 (from disk cache)`. Clear the cache (or check Disable cache and reload) and you're done.
+
+> An engineering habit: **during debugging, always use `302` (temporary) for redirects rather than `301` (permanent)**, and switch back to 301 once the config is finalized. 302 won't be stubbornly cached by the browser, so you won't be haunted by your own config from half an hour ago.
+
+---
+
+## 6. Gate 3: access control — two independent axes
+
+This is the topic I'd wanted to learn all along, and it's more structured than I expected. This section makes Apache's access control — and the handful of related files — clear.
+
+### Background: Authentication vs Authorization
+
+Old Apache's access control (the 2.2 era, now supported via `mod_access_compat`) is really **two independent axes**:
+
+- **Who you are** (authentication): username and password. Uses `AuthType` / `AuthName` / `AuthUserFile` / `Require valid-user`.
+- **Where you come from** (authorization by host): source IP. Uses `Order` / `Allow` / `Deny` (2.2 syntax), or `Require ip` (2.4 syntax).
+
+And the `Satisfy` directive decides **how these two axes combine**:
+
+- `Satisfy All` (default): both must pass.
+- `Satisfy Any`: passing one is enough.
+
+### Dissecting my .htaccess
+
+De-identified, it looked like this:
+
+```apache
+AuthUserFile /var/www/html/.htpasswd     # where the password file is
+AuthName "Please Log In"                  # ← the title (realm) shown on the login box
+AuthType Basic                            # HTTP Basic auth
+require valid-user                        # any successfully logged-in account is let through
+
+Order allow,deny
+#Allow from 203.0.113.0/255.255.255.0     # ← this whole line is "commented out"
+Satisfy any                               # ← the key
+
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^([^\.]+)$ $1.php [NC,L]      # internally rewrite /foo to /foo.php
+```
+
+Reading it line by line:
+
+- **`AuthType Basic` + `AuthName`**: enables HTTP Basic auth. When the browser receives a `401` plus the header `WWW-Authenticate: Basic realm="Please Log In"`, it pops up that native credentials dialog. The source of that "login box" is these two lines.
+- **`AuthUserFile` + `.htpasswd`**: the location of the password file. `.htpasswd` is produced with the `htpasswd` tool, one `account:hashed-password` per line.
+- **`Order allow,deny` + `#Allow from ...`**: the IP allowlist axis. But note the `Allow` line is **commented out with a hash**, so on the IP axis this is effectively "deny everyone."
+- **`Satisfy any`**: for the two gates, passing one is enough. The IP gate is closed to everyone, but as long as the **credentials** pass, the whole thing is let through.
+
+Put together, the actual effect is: **credentials only, open to the whole world** — anyone with that set of credentials can get in from any IP, including the reverse proxy's internal IP.
+
+This actually resolved a long-standing misjudgment of mine: I'd seen a pile of `client denied by server configuration` (403s from IP authorization) in the early logs and assumed "there must be a live IP wall blocking things." But only by reading the **current** file — plus one real click (webgis opened fine) — did I confirm that wall had long been switched off by `Satisfy any`. Those 403s were an older state, from before this `.htaccess` grew into what it is now.
+
+### Why .htaccess needs AllowOverride
+
+`.htaccess` isn't in effect by default. The main Apache config must set `AllowOverride` for that directory before `.htaccess` gets read. This is a security-and-performance trade-off — `AllowOverride None` (Debian's default for `/var/www/`) means "ignore all `.htaccess`."
+
+- `AllowOverride None`: ignore `.htaccess` entirely.
+- `AllowOverride AuthConfig`: allow only auth-related directives in `.htaccess`.
+- `AllowOverride All`: allow everything.
+
+So in Gate 2's `Alias` config, the `<Directory>` must set `AllowOverride All`, or this `.htaccess`'s auth and rewrite all stop working. **One possible root cause of "the login box doesn't show up" is that `AllowOverride` wasn't enabled.**
+
+There's also a common safeguard, usually placed in the main config, to keep files like `.htaccess` / `.htpasswd` from being downloaded directly as static files:
+
+```apache
+<Files ".ht*">
+    Require all denied
+</Files>
+```
+
+### The IP allowlist trap behind a reverse proxy
+
+If you want to add that `Allow from` line back, there's a subtlety nginx users also know: **after a request passes through the reverse proxy, the source IP the backend sees is the proxy's IP, not the real user's.** So uncommenting `Allow from <some subnet>` directly would just block **everyone** (because everyone becomes the proxy's IP).
+
+The correct fix is to first restore the real client IP from `X-Forwarded-For` using `mod_remoteip`:
+
+```apache
+# The host-layer vhost forwards the real IP
+RemoteIPHeader X-Forwarded-For
+RemoteIPTrustedProxy 127.0.0.1
+```
+
+(Mapped to nginx, that's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` plus the `real_ip` module. Same concept.)
+
+### The takeaway
+
+> Access control isn't a single switch; it's **two independent axes (identity / origin) plus one combining rule (Satisfy)**. Understand this structure and you won't conflate "the login box" with "IP denial." Also, `.htaccess` needs `AllowOverride` to take effect, and judging the real origin behind a reverse proxy needs `X-Forwarded-For` restoration.
+
+---
+
+## 7. Gate 4: the three gates from container to host database
+
+The last gate: the app is in a container, and the database is the one **on the host** (shared with other projects, holding real data). The home page initially showed "data being prepared," because the container was connecting to a different, **empty** MariaDB in the compose file, not the one on the host.
+
+To let the container connect to a service on the host, there are **three gates, and all three must be open**:
+
+```
+web container
+  │  ← Gate 1: routing (can it even reach the host?)
+  ▼
+host network gateway
+  │  ← Gate 2: listening (is mariadb listening on an address the container can reach?)
+  ▼
+host MariaDB
+  │  ← Gate 3: authorization (does this account allow connections from the container's source IP?)
+  ▼
+data
+```
+
+Whenever any one is closed, the error message differs — which is why the `mysqli` test below is so useful: it tells you directly which gate you're stuck at.
+
+**Gate 1 | routing.** On Linux, for the container to reach the host by the name `host.docker.internal`, you need to add `extra_hosts` to that service in compose:
+
+```yaml
+services:
+  web:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+Without this line, `host.docker.internal` won't resolve at all inside the container.
+
+**Gate 2 | listening address (bind-address).** The host's MariaDB must listen on an address the container can reach. Check on the host:
+
+```bash
+ss -tlnp | grep 3306
+# If you only see 127.0.0.1:3306 → the container (in a different network namespace) can't reach it
+# It needs to listen on 0.0.0.0 or the docker bridge gateway address (usually 172.17.0.1)
+```
+
+> Security reminder: changing to `0.0.0.0` exposes 3306 on all of the host's interfaces. Be sure the firewall doesn't open it to the public internet, or bind only to the docker bridge address.
+
+**Gate 3 | account authorization (the origin in GRANT).** This is the one I got stuck on. Connecting from the container, MariaDB replied straight away:
+
+```
+Host '172.18.0.13' is not allowed to connect to this MariaDB server
+```
+
+This message is **from MariaDB itself**, meaning the packet already reached it (Gates 1 and 2 are open), but this account doesn't allow connections from the container's source IP. A MariaDB account is a `user@origin` combination, and the origin column is **actually being matched**:
+
+```sql
+-- Originally this account was only granted to one specific host + localhost, never meant for a container
+SELECT user, host FROM mysql.user WHERE user='appuser';
+-- appuser | 203.0.113.37
+-- appuser | localhost
+
+-- Add the docker subnet as an origin (use the wildcard 172.%, don't hard-code a changeable IP)
+CREATE USER 'appuser'@'172.%' IDENTIFIED BY '<the account's real password on the host>';
+GRANT ALL PRIVILEGES ON appdb.* TO 'appuser'@'172.%';
+FLUSH PRIVILEGES;
+```
+
+Test all three gates in one shot from inside the container (`mysqli` is already installed in the container, and the error message pinpoints a single gate):
+
+```bash
+docker compose exec web php -r '$m=@mysqli_connect("host.docker.internal","appuser","<password>","appdb",3306); echo $m?"OK\n":("FAIL: ".mysqli_connect_error()."\n");'
+```
+
+`OK` means all three are open; `No route to host` / `Connection refused` is Gate 1 or 2; `Access denied` is Gate 3 or the password. Finally, don't forget to set the app's `DB_HOST` to `host.docker.internal` in `.env` (the test passing doesn't mean the app has switched over).
+
+### The takeaway
+
+> "Can't connect to the database" isn't one problem, it's **three**: routing, listening, authorization. And MariaDB's account `host` field really is matching the source IP — this is especially easy to trip over when you containerize a service and the source IP thereby becomes a docker subnet.
+
+---
+
+## 8. Aside: why Next.js is exactly the opposite of PHP
+
+The project also had a Payload CMS (Next.js) to mount at `/cms`. It's exactly the **opposite** case to the PHP app above, and it perfectly rounds out this lesson on "how the frontend obtains resources."
+
+The PHP app's resource links **carry the prefix**, so once Gate 2's "keep the prefix + Alias" was in place, the app aligned without changes. Next.js is the opposite: by default it writes resources (`/_next/...`) and internal links as **root-absolute paths without the prefix**. That's exactly the "styles drop" category from Gate 2 — and this time **no amount of proxy fiddling saves you**, because what's getting lost are URLs the app itself generated.
+
+The fix is to set `basePath: '/cms'` on the app side (a Next.js setting), and it will add the `/cms` prefix to both resources and links; the proxy is then changed to **keep the prefix**. And there's a crucial difference: `basePath` and `NEXT_PUBLIC_*` are baked into the frontend bundle at **build time**, so changing them requires **rebuilding the image**, not just a reload — completely unlike the earlier Apache changes (mounted at runtime, in effect on reload).
+
+### The takeaway
+
+> "Should this change be a reload or a rebuild?" depends on whether it's a **runtime** setting or a **build-time** setting. Apache config is runtime; a frontend framework's base path and `NEXT_PUBLIC_*` are build-time. Miss this distinction and you'll change a setting yet see nothing take effect no matter what.
+
+---
+
+## 9. A few deliberate trade-offs
+
+Beyond fixing bugs, what this project really took thought over was a handful of "nobody forced me at the time, but I chose it on purpose" decisions. Pulled out on their own:
+
+- **Containerize first, don't rush the version bump.** Facing EOL PHP 5.6 plus no tests to lean on, I chose to move it into a container as-is and get it running stably on a modern host, rather than migrating and rewriting at once — splitting "make it run" from "upgrade it," carrying one kind of risk at a time.
+- **Don't change the image; mount config instead.** The prefix mapping uses `Alias` in a config mounted into the container's `conf-enabled/`, rather than editing the official image: minimally invasive, reproducible, and not lost on a version bump.
+- **Use `302` while debugging, switch to `301` only when finalized.** Foreseeing that a permanent redirect gets stubbornly cached by the browser and bites back, I used a temporary redirect to rule that variable out.
+- **Grant the database the wildcard `172.%`, not a hard-coded IP.** Docker-assigned container IPs change; hard-coding one buries a landmine for later — a subnet wildcard settles it in one go.
+- **Verify inside-out, one variable at a time.** Hit the container directly with `curl`, bypassing the host, to nail down the "host vs container" line first, then test outward along the full chain — one variable per step, easy to back out when something breaks.
+
+These aren't pretty words added after the fact; they were the actual choices — "do I touch the image, do I upgrade first, do I hard-code the IP" — made in the moment.
+
+---
+
+## 10. What to really take away: a debugging methodology
+
+Fixing a pile of bugs isn't the point. The point is the method I trained along the way, the one I can carry to the next system.
+
+**Outside-in, one layer at a time.** Push inward along the request path (host Apache → container Apache → `.htaccess` → PHP → DB), station by station, naming each gate (A/B/C/D) as a progress map. **Change only one variable at a time**, so it's easy to back out when something breaks.
+
+**Predict-then-verify.** At each layer, place your bet first, then reveal the answer. The value of this habit isn't in guessing right; it's that it **forces the mental model in your head out for reconciliation** — when you guess wrong, that's when you learn where your thinking was off.
+
+**Use curl for layer isolation.** This is the most practical trick: hit `127.0.0.1:8080` directly (bypassing the host) versus going through the full chain, and use the `Server:` header in the response (`Ubuntu` is the host, `Debian` is the container) to tell which layer is responding. One status code, one header line, and you've pinned the "host vs container" battle line. And curl has no browser cache, so it won't be fooled by that "301 ghost."
+
+**Reading the present beats reasoning from history.** "A 403 in yesterday's log" can't prove "today's config is still blocking." Only reading the current `.htaccess`, plus one real click, closes the case.
+
+**Don't blindly trust any single source — including the one you're most confident in.** Throughout this process, I (treating this write-up as that "experienced collaborator") misjudged at least twice: twice predicting that IP wall was still alive, and mis-attributing a 403 to the "data being prepared" symptom. Neither was overturned by anyone's reasoning; both were cleared up by reading the current file and clicking a real link. So: **the `curl` response in your hand, the current config file, always outrank any confident-sounding reasoning. Read the evidence > listen to authority.**
+
+---
+
+## Closing
+
+Looking back, this vague symptom of "the frontend gets nothing" had root causes scattered across four completely different spots: an invisible `.conf2` filename, a stripped path prefix, an `.htaccess` that had switched off the IP wall, and a database account that didn't recognize the container's origin. Not one of them could be found by "staring at the code and thinking" — all of them took walking the request path, verifying layer by layer.
+
+If this post leaves you with one thing to take away, I hope it's this: **when something "doesn't work," don't ask "where's the mistake"; ask first "where along the path did the request break?"** The former has you staring at code, thinking in circles; the latter has you walk that chain and force it out, station by station.
+
+If I compress this trip into "what kind of engineer does this": rapidly building mental models on an unfamiliar stack (Apache, PHP, mod_php), single-handedly owning the containerization and deployment of a production legacy system, moving back and forth to locate problems across cross-domain links — Linux networking, reverse proxy, TLS, database authorization — and turning the process into a method others can reuse. Frontend, backend, ops — I had to walk all of it myself this time. And what I really want to show isn't which tool I can use; it's that when I meet a system I've never seen, I have a stable method to take it apart, understand it, and fix it.
+
+If you're interested in "taking over someone else's legacy system," I've written other facets of the same theme: [Optimising Legacy System Performance: When the Problem Isn't the Code](/en/blog/optimizing-legacy-system-performance) and [Rethinking the Legacy Fix: From Prompt to Context to Harness Engineering](/en/blog/rethinking-legacy-optimization-context-engineering).
+
+---
+
+*The domains, accounts, passwords, and internal IPs in this post are all de-identified illustrative values.*
