@@ -1,0 +1,88 @@
+---
+title: "From 24 Seconds to 0.08: A PHP 5.6 → 8.5 Upgrade That Paid Off Years of Performance Debt"
+date: "2026-07-06"
+description: "A long-serving historical-archive search system needed a security-driven PHP and MariaDB upgrade. I used the opportunity to clear years of performance debt: homepage p95 dropped from 23.99s to 76.92ms, web CPU from a saturated 360% to 22%, and all 50-VU load tests passed — with every improvement independently attributable via one-commit-one-measurement workflow."
+tags: ["Performance", "PHP", "MariaDB", "Docker", "Apache", "Redis", "k6", "Load Testing", "Legacy Systems", "System Diagnosis"]
+challenge: "A PHP 5.6 system running for years had to be upgraded to PHP 8.5 for security compliance — while carrying severe performance problems: homepage p95 of 24 seconds, web container CPU saturated at 360%, and a failing 50-user mixed load test. How do you fix performance during the upgrade, and produce evidence that stands up to scrutiny for every single improvement?"
+outcome: "All four k6 load tests passed: homepage p95 23.99s → 76.92ms, map page p95 13.57s → 54.26ms, web CPU peak 360% → 22%, DB connection high-water mark 101 → 7. Each optimization shipped as its own commit with its own measurement, with upgrade gains and optimization gains honestly attributed apart."
+---
+
+A historical-archive search system that had been in service for years (PHP 5.6 + MariaDB 10.4) needed to move to PHP 8.5 + MariaDB 11.8 for security compliance. I used the upgrade as the opportunity to deal with performance problems that had been accumulating just as long.
+
+Results first — same k6 scripts, same thresholds, not a character changed between runs:
+
+| Metric | Before | After | Change |
+|---|---|---|---|
+| Homepage p95 (50 VUs, mixed) | 23.99s (failing) | **76.92ms** | -99.7% |
+| Map page p95 | 13.57s (failing) | **54.26ms** | -99.6% |
+| Web container CPU peak | ~360% (saturated) | **~22%** | effectively idle |
+| DB connection high-water mark | 101 | **7** | queue collapse gone |
+| Throughput | 3.96 req/s | 16.91 req/s | +327% |
+
+All four load tests at 50 concurrent users passed with zero HTTP errors.
+
+## My Role and Constraints
+
+I owned this end to end: diagnosis, planning, implementation, deployment verification. One practical constraint shaped everything — **my development machine had no full production dataset** (a full database import takes hours). So the workflow had to be designed around it: verify locally whatever could be proven with file-level evidence; defer to the test server only what genuinely required full data (load tests, full-data behavior).
+
+That constraint turned out to shape the whole methodology.
+
+## Methodology: Three Deliberate Decisions
+
+### 1. One optimization, one commit, one measurement
+
+I didn't batch the optimizations and measure once at the end. Every item shipped as its own commit with its own evidence: bytes before/after GeoJSON compression, request-count changes, Redis connection counts. The reason is simple: **if you change ten things and performance improves, you don't actually know which change did it** — and both client acceptance and future maintenance need to know.
+
+### 2. Honest attribution: the upgrade's gains don't belong to my optimizations
+
+PHP 5.6 → 8.5 is itself a massive performance win: a generation-newer engine, and — verified empirically — the old container **had no OPcache loaded at all**, while the new official image ships with it enabled by default. That means the load-test delta is the *sum* of upgrade gains and optimization gains.
+
+I separated the two explicitly in the report: transfer-volume metrics (compression, request reduction) have file-level evidence and can be attributed to specific optimizations; CPU and latency metrics are honestly reported as combined effects. **"Optimizations alone achieved X; together with the upgrade, Y" is more convincing than one big vague number — and it survives follow-up questions.**
+
+I also corrected one of my own misjudgments along the way: I briefly believed the baseline load test had run on the new PHP, and on that basis overturned the "missing opcode cache causes high CPU" diagnosis — then confirmed the baseline was actually PHP 5.6 without OPcache, meaning the original diagnosis had been reasonable and I had over-corrected. That correction went into the work log verbatim.
+
+### 3. One-sided changes beat synchronized two-sided changes
+
+The frontend's i18n layer opened a fresh TCP connection to Redis for every translated string — 100+ connections per homepage render. The textbook fix is storing each locale as a single JSON key, but that requires **changing both the writer (CMS) and the reader** and shipping them in lockstep.
+
+Reading the CMS sync code, I found it already maintained a SET index of every key — so the reader could batch-load an entire locale with `SMEMBERS` + `MGET` unilaterally, without touching the writer at all. 100+ connections per page became 1, with zero cross-system coordination cost.
+
+## Three Debugging Stories
+
+### The results page that made 412 requests
+
+A user reported a search-results page "loading forever": DevTools showed 412 requests, 102MB transferred, the same GeoJSON file downloaded ~20 times.
+
+The cause: every table row embedded a map-preview modal, each containing an `<iframe>`. **An iframe loads immediately even when hidden inside an unopened modal (`display:none`)** — 20 rows meant 20 full map pages, each pulling its own base maps and layer files.
+
+The fix: change `src` to `data-src` and listen for Bootstrap's `show.bs.modal`, loading only on first open. 412 requests became 6.
+
+### The 40-second frozen homepage
+
+During local testing the homepage would hang for 40+ seconds, looking like the whole service was down. The culprit was that same i18n layer: with Redis unreachable, **every translation key paid its own 0.2-second connection timeout** — 100+ keys stacked into 40 seconds. Everyone talks about N+1 database queries, but N+1 TCP connections become an N× timeout under failure — a **failure amplifier**. The batching rewrite defused this too: connection failure is now paid once, then everything falls back to default strings.
+
+### The metric trap: "total traffic went *up*"
+
+After optimization, the mixed load test received 607MB versus 538MB before — looks like a regression? Except throughput was 4.3× higher: the same 14 minutes completed 4.3× the requests. The correct comparison is **bytes per request: 165KB → 43KB (-74%)**. The pre-optimization steady 641kB/s was actually a bandwidth ceiling throttling throughput; after optimization, the same bandwidth budget does 4× the work.
+
+**Define the metric wrong, and success looks like failure.** For any "total volume" acceptance target, first ask: does this number still mean anything if throughput shifts dramatically?
+
+## A Regression I Caused Myself
+
+One mistake of my own, for the record. The homepage carousel used `<svg><image>` (which doesn't support native lazy loading); converting it to `<img loading="lazy">`, I set `object-fit: cover` — and flattened the design. The intended visual was "portrait document image fully visible, centered, hand-drawn backdrop showing on both sides"; `cover` cropped the image and buried the backdrop. SVG's default behavior is equivalent to `contain`. One word, completely different visual.
+
+It took the user's screenshot report and side-by-side browser rendering to fix properly. The lesson in one line: **performance changes are UI changes — curl cannot verify visuals.** Every markup-touching change after that got verified with actual browser rendering, not just HTML output.
+
+## Migration Landmine Checklist (PHP 5.6 → 8.x, MariaDB 10.x → 11.x)
+
+The traps I hit and cleared, for anyone walking the same road:
+
+- **MariaDB 11.x removed the `mysql`/`mysqldump`/`mysqladmin` command names** — only `mariadb-*` remains. Every script and healthcheck must switch. Since the 10.4 image carries *both* names, you can switch early and carry zero script risk on upgrade day.
+- **Datadirs can't be upgraded in place across major versions.** Always: fresh directory + dump re-import, keeping the old directory until verification completes (your rollback).
+- **PHP 8 promoted undefined variables from Notice to Warning.** Legacy code that echoes never-assigned variables in no-data branches was invisible on 5.6 and prints warnings onto the page in 8.x. Keep `display_errors` off in production (warnings belong in logs) — which is also the security-correct choice: don't print paths and code structure to users.
+- **Frontend asset version mismatches fail silently.** One page's modal simply did nothing when clicked: its markup was Bootstrap 5 (`data-bs-toggle`) but the page still loaded a 2017 Bootstrap 4 beta bundle that only understands `data-toggle` — no error, no action. It was the only page in the site still referencing the old file.
+- **Official PHP images changed their OPcache behavior across versions**: 8.5 bundles and enables it by default, and `docker-php-ext-install opcache` actually *breaks* the build. Before attributing performance gains, run `php -v` and check what the platform already gives you — don't book the platform's win as your config change.
+
+## Closing
+
+The biggest takeaway isn't the numbers — it's the validated practice: **treat attributability as a first-class requirement of the workflow.** Every change committed separately, measured separately, with honest bookkeeping of which gains were mine and which belonged to the platform. Numbers talk, but only numbers that survive interrogation are worth talking about.
