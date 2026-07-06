@@ -137,17 +137,29 @@ docker run --rm --network host \
 
 ### 搭配 [k6-observability-stack](../../k6-observability-stack) 看儀表板
 
-這兩個 repo 各自獨立 `docker compose up`，透過 named external network `k6-observability-net` 互通（用法見該 repo 的 [README](../../k6-observability-stack/README.md#如何從外部-app-repo-接入)）：
+`garywu-portfolio/docker-compose.yml` 裡的 `web` service **已經**宣告加入 named external network `k6-observability-net`，跟 `k6-observability-stack` 的 `influxdb`/`grafana` 是共用同一個 network 的鄰居（用 `docker network inspect k6-observability-net` 可以看到）。這代表技術上可以直接用容器名稱（`garywu-portfolio-web-1`/`-2`/`-3`，或 compose 的 service alias `web`）從 k6 容器打到正式站——但**不要這樣做**：那是正式部署的 3 個 replica，跟上面「對正式站做健康檢查時務必縮小規模」講的是同一個風險。
 
-1. 讓 `garywu-portfolio` 的容器加入 `k6-observability-net`（在自己的 `docker-compose.yml` / override 裡宣告 `external: true` 的 network，並記下 service name，例如 `web`）。
-2. 在 `k6-observability-stack` 目錄執行 `make up`。
-3. 把這個目錄的 `k6/` 資料夾整個掛進 `k6-observability-stack` 的 k6 容器（或直接改它的 `docker-compose.yml`，把 `./scripts` 的掛載來源指到這個 repo 的 `k6/`）。
-4. 執行：
+正確做法是另外起一個跟正式部署無關的**臨時容器**當測試目標，一樣加入這個共用 network。以下步驟已經實際跑過一次驗證（見下方「已驗證過的行為」）：
+
+1. 起一個跟正式 3 個 replica 完全隔離的臨時容器，只加入共用 network，不對外開 port：
    ```bash
-   BASE_URL=http://web:3000 make run SCRIPT=scripts/site-journey.js
+   docker run -d --rm \
+     --name garywu-portfolio-k6-target \
+     --network k6-observability-net \
+     garywu-portfolio:latest
    ```
-   （`web` 換成上面第 1 步宣告的 service name；`BASE_URL` 這個環境變數需要一併傳進 k6 容器，可以直接改 `k6-observability-stack/docker-compose.yml` 裡 `k6` 服務的 `environment`，或用 `docker compose run -e BASE_URL=... k6 ...`。）
-5. 打開 Grafana（`http://localhost:3000`，跟 stack 本身衝 port 的話記得先調整 `GRAFANA_PORT`），在 dashboard 上看 VU 數、`http_req_duration`、依 `name` tag 分開的各類頁面（`home`、`blog-post`、`case-study-detail`…）回應時間。
+2. 在 `k6-observability-stack` 目錄執行 `make up`，確保 `influxdb`/`grafana` 已啟動。
+3. 用 `docker compose run` 的 `-v` 把這個目錄的 `k6/` 掛進**一個新路徑** `/portfolio-k6`（不要用 `/scripts`，那個路徑在 `k6-observability-stack` 的 `docker-compose.yml` 裡已經掛了 `./scripts`，掛到同一個 target path 會有 mount 衝突），並用 `-e` 把 `BASE_URL` 指到上面的臨時容器：
+   ```bash
+   cd /opt/k6-observability-stack
+   docker compose run --rm \
+     -v /opt/garywu-portfolio/k6:/portfolio-k6:ro \
+     -e BASE_URL=http://garywu-portfolio-k6-target:3000 \
+     k6 run /portfolio-k6/smoke.js
+   ```
+   跑 `site-journey.js` 也一樣，多帶 `-e VUS=... -e RAMP_TIME=... -e DURATION=...` 即可（換掉最後的檔名和路徑）。`K6_OUT` 已經寫在 `k6-observability-stack` 的 compose 環境變數裡，不需要額外再帶 `--out`。
+4. 打開 Grafana（`http://localhost:3000`，跟 stack 本身衝 port 的話記得先調整 `GRAFANA_PORT`），在 dashboard 上看 VU 數、`http_req_duration`、依 `name` tag 分開的各類頁面（`home-zh`、`blog-post`、`case-study-detail`…）回應時間。
+5. 測完清掉臨時容器：`docker stop garywu-portfolio-k6-target`（`--rm` 啟動的，`stop` 後會自動移除）。
 
 ## 已驗證過的行為
 
@@ -156,5 +168,6 @@ docker run --rm --network host \
 - `smoke.js`：9 條路由全部回 200。
 - `site-journey.js`：sitemap 探索邏輯正確解析出 225 個 URL，並成功分類、隨機走訪到首頁、靜態頁、blog 列表/文章/分類/標籤/系列頁、案例研究列表/詳情、OG image 等所有型別，全部回 200。
 - `--vus`/`--iterations` 覆蓋、`--summary-export` 都實際跑過。`--summary-export` 第一次測試時因為 `grafana/k6` image 預設不是 root 而 permission denied，補上 `--user "$(id -u):$(id -g)"` 後才確認可以正常寫出 JSON——上面「常用情境」範例 5 已經是修正後的版本。
+- 跟 `k6-observability-stack` 整合的流程（上面「搭配 k6-observability-stack 看儀表板」）也實際跑過一次：起臨時容器、用 `/portfolio-k6` 掛載路徑跑 `smoke.js`，486 次請求全部通過，並用 InfluxDB `SELECT count("value") FROM "http_reqs"` 確認資料確實寫進去，Grafana dashboard 看得到。過程中沒有動到正式站的 3 個 replica。
 
 **注意**：測試時務必指向獨立的測試環境（本機 `npm run dev`、CI 建置出的容器、或另外跑的臨時容器），不要直接把 `BASE_URL` 指向正式站的 3 個 replica（`docker-compose.yml` 目前跑在 host port 3051-3053）——`site-journey.js` 預設 10 VUs 對外持續打 3 分鐘的流量,拿正式站當壓測目標會影響真實訪客。

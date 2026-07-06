@@ -56,3 +56,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    networks:
+      - k6-observability-net
+networks:
+  k6-observability-net:
+    name: k6-observability-net
