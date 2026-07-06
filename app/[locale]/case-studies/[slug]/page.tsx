@@ -5,6 +5,8 @@ import { Link } from '@/i18n/navigation';
 import { getCaseStudy, getAllCaseStudies } from '@/lib/mdx';
 import { MDXRemote } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
+import rehypePrettyCode from 'rehype-pretty-code';
+import { prettyCodeOptions } from '@/lib/mdx-highlight';
 import { Tag } from '@/components/ui/Tag';
 import { mdxComponents } from '@/components/blog/MdxLink';
 import { JsonLd } from '@/components/seo/JsonLd';
@@ -111,7 +113,7 @@ function CaseStudyContent({
         prose-li:text-[var(--fg-muted)]
         prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:underline
         prose-code:font-mono prose-code:text-xs prose-code:text-[var(--accent)] prose-code:bg-[var(--bg-subtle)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded
-        prose-pre:bg-[var(--bg-subtle)] prose-pre:border prose-pre:border-[var(--border)]
+        prose-pre:bg-[var(--bg-subtle)] prose-pre:border prose-pre:border-[var(--border)] prose-pre:font-mono
         prose-strong:text-[var(--fg)]
         prose-table:text-sm prose-table:font-mono
         prose-th:text-[var(--fg)] prose-th:font-semibold prose-th:border-[var(--border)]
@@ -122,7 +124,12 @@ function CaseStudyContent({
         <MDXRemote
           source={post.content}
           components={mdxComponents}
-          options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
+          options={{
+            mdxOptions: {
+              remarkPlugins: [remarkGfm],
+              rehypePlugins: [[rehypePrettyCode, prettyCodeOptions]],
+            },
+          }}
         />
       </article>
     </>

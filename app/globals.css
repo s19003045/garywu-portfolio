@@ -132,6 +132,25 @@ body {
   max-width: 68ch;
 }
 
+/* ─── Code block syntax highlighting (rehype-pretty-code) ───── */
+/* Shiki renders both themes and stores each as a CSS var per token       */
+/* (--shiki-dark / --shiki-light); pick the one matching this site's      */
+/* :root+.dark / .light convention. Block background stays on            */
+/* `prose-pre:bg-[var(--bg-subtle)]` (keepBackground:false in            */
+/* lib/mdx-highlight.ts), so only foreground token color is set here.    */
+
+:root code[data-theme*=' '],
+:root code[data-theme*=' '] span,
+.dark code[data-theme*=' '],
+.dark code[data-theme*=' '] span {
+  color: var(--shiki-dark) !important;
+}
+
+.light code[data-theme*=' '],
+.light code[data-theme*=' '] span {
+  color: var(--shiki-light) !important;
+}
+
 /* ─── Focus ring ─────────────────────────────────────────── */
 
 *:focus-visible {
