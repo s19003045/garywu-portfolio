@@ -1,0 +1,101 @@
+---
+title: "FHIR 十五分鐘導覽：它就是 REST + JSON + 術語紀律"
+date: "2026-07-07"
+description: "給軟體工程師的 FHIR 最短路徑：Resource、RESTful API、CapabilityStatement 與 Profile。你既有的 Web 技能可以直接進場。"
+tags: ["FHIR", "REST API", "醫療資訊", "HL7"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 1
+---
+
+> **這篇適合誰**：沒接觸過醫療領域的軟體工程師。讀完你會發現 FHIR 的學習曲線比想像平緩——難的不是技術，是領域知識，而那部分本系列會一路補給你。
+
+## 先說結論：你已經會一半了
+
+FHIR 的核心可以用一句話說完：**把醫療世界拆成約 150 種標準化的 JSON 資源，用 RESTful API 交換。**
+
+```bash
+GET  /fhir/Patient/123                 # 讀一個病人
+POST /fhir/Observation                 # 建一筆檢驗結果
+GET  /fhir/Observation?patient=123&code=2345-7&date=ge2026-01-01
+                                       # 搜這個病人的血糖紀錄
+```
+
+如果你寫過任何 REST API，這些你都認得。醫療標準的上一個世代（HL7 v2 的管線分隔訊息、HL7 v3 的巨型 XML）對 Web 工程師是外星語；FHIR 是 HL7 痛定思痛後，用 Web 世界的既有工法重造的標準——HTTP、REST、JSON、OAuth。
+
+## Resource：醫療世界的標準積木
+
+FHIR 把臨床事實建模成資源，常用的一小撮：
+
+| 資源 | 對應的臨床概念 |
+|---|---|
+| `Patient` | 病人基本資料 |
+| `Encounter` | 一次就醫（門診/急診/住院） |
+| `Condition` | 診斷（如第 2 型糖尿病） |
+| `Observation` | 檢驗數值、血壓、體溫……一切「量測出來的事實」 |
+| `MedicationRequest` | 處方 |
+| `Practitioner` / `Organization` | 醫事人員／機構 |
+
+資源之間用 `reference` 連結，形成一張以病人為根的圖：
+
+```
+Patient ◄── Encounter ◄── Condition（診斷）
+                      ◄── Observation（檢驗、生命徵象）
+                      ◄── MedicationRequest（用藥）
+```
+
+一筆檢驗結果長這樣（節錄自本 POC 的真實輸出）：
+
+```json
+{
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {
+    "coding": [{ "system": "http://loinc.org", "code": "4548-4",
+                 "display": "Hemoglobin A1c/Hemoglobin.total in Blood" }],
+    "text": "HbA1c(糖化血色素)"
+  },
+  "subject": { "reference": "Patient/pat-800001" },
+  "valueQuantity": { "value": 7.7, "unit": "%",
+                     "system": "http://unitsofmeasure.org", "code": "%" },
+  "referenceRange": [{ "low": { "value": 4.0 }, "high": { "value": 5.6 } }],
+  "interpretation": [{ "coding": [{ "code": "H" }] }]
+}
+```
+
+注意兩件事：數值帶著**標準化單位**（UCUM），檢驗項目用**全球通用代碼**（LOINC 的 `4548-4` 在世界任何地方都是糖化血色素）。這就是「術語紀律」——FHIR 解決語意互通的方式，系列第 4 篇會深入。
+
+## FHIR Server 不只是資料庫
+
+一個合規的 FHIR Server 承諾一整套標準行為，全部開箱即用：
+
+- **CRUD + 自動版本控制**：每次 update 自動留歷史版本（醫療資料天生需要 audit trail），`GET /Patient/123/_history/2` 可以調出舊版
+- **標準化搜尋**：每種資源有定義好的搜尋參數、修飾詞、分頁
+- **交易**：transaction Bundle，多筆資源全有或全無地寫入
+- **驗證**：`$validate`——把資源丟給 server，它告訴你哪裡不合規（第 5 篇的主角）
+- **自我描述**：`GET /metadata` 回傳 `CapabilityStatement`，機器可讀的「我支援什麼」
+
+最後一項值得停一秒：傳統系統介接要開會交換規格文件，FHIR 的 API 合約是**機器可讀**的。這對做過系統整合的人來說，是體感差異最大的一點。
+
+## 寬鬆的基礎規格 + 收緊的 Profile
+
+FHIR 基礎規格刻意寬鬆——`Patient` 幾乎沒有必填欄位，因為它要服務全世界。代價是「都合法、卻不互通」：兩個系統可以各自都是 100% 合法的 FHIR，卻因為 identifier 沒帶命名空間、檢驗用了各自的代碼而雞同鴨講。
+
+解法是 **Profile**：在基礎資源上加規則（哪些欄位必填、值必須來自哪個代碼表），打包成 **Implementation Guide（IG）** 發行。美國有 US Core，台灣有衛福部的 **TW Core IG**——2025 年 12 月發布 1.0.0 正式版，規定了例如：
+
+- 身分證字號放 `identifier`，`system` 固定為 `http://www.moi.gov.tw`
+- 病人的 `identifier`、`gender`、`birthDate` 必填（基礎 R4 都不要求）
+- 診斷用台灣健保申報使用的 ICD-10-CM 版本
+
+**互通 = FHIR 基礎規格 + 共同 Profile + 自動化驗證**，三者缺一不可。這是整個系列最重要的一個公式。
+
+## 給工程師的進場地圖
+
+- 型別：`@types/fhir` 提供完整 TypeScript 定義（`fhir4.Patient`、`fhir4.Observation`……）
+- Server：不用自己寫，開源的 HAPI FHIR 用 Docker 起一個就是完整實作（下一篇實戰）
+- Client：不需要 SDK，`fetch` 就夠（第 6 篇有完整示範）
+- 官方文件：[hl7.org/fhir](https://hl7.org/fhir/)（R4 版），台灣規範看 [TW Core IG](https://twcore.mohw.gov.tw/ig/twcore/)
+
+> **決策者視角**：FHIR 對工程團隊的實質意義是「醫療介接從特規工程變回 Web 工程」。人才市場上會 REST + JSON 的工程師遠多於會 HL7 v2 的——這直接影響導入的人力成本與供給。
+
+下一篇進入實戰：怎麼在不動既有 HIS 的前提下，把一台載好台灣規範的 FHIR Server 跑起來。

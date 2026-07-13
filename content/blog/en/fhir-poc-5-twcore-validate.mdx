@@ -1,0 +1,95 @@
+---
+title: "TW Core Conformance in Practice: Slicing, $validate, and Three Errors We Actually Hit"
+date: "2026-07-11"
+description: "'TW Core conformant' is a machine verdict, not an opinion. Implementing identifier slicing for national IDs and chart numbers, an idempotent ETL, and driving 12 profiles to $validate with 0 errors — with the debugging notes for three real failures."
+tags: ["FHIR", "TW Core", "Profile", "Validation", "TypeScript"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 5
+---
+
+> **Who this is for**: healthcare engineers writing actual TW Core-conformant code — the densest article in the series. Engineers outside healthcare can substitute any "strict spec layered on a loose base" scenario (OpenAPI extensions, JSON Schema profiles); the machinery is identical.
+
+## The core profile mechanism: slicing
+
+A profile adds rules to a loose base resource. The mechanism you must understand is **slicing**: carving a repeating element (an array) into named slots, each with its own rules.
+
+TW Core slices `Patient.identifier` into slots for national ID, chart number, passport, and residence permit. The validator uses a **discriminator** to decide which slot each array element falls into, then applies that slot's rules. In practice:
+
+```json
+"identifier": [
+  {
+    "type": { "coding": [{
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+      "code": "NNxxx",
+      "_code": { "extension": [{
+        "url": "https://twcore.mohw.gov.tw/ig/twcore/StructureDefinition/identifier-suffix",
+        "extension": [
+          { "url": "suffix", "valueString": "TWN" },
+          { "url": "valueSet", "valueCanonical": "http://hl7.org/fhir/ValueSet/iso3166-1-3" }
+        ]
+      }] }
+    }] },
+    "system": "http://www.moi.gov.tw",       // national-ID slot: fixed system
+    "value": "F185213968"
+  },
+  {
+    "type": { "coding": [{ "system": ".../v2-0203", "code": "MR" }] },
+    "system": "https://poc-hosp.example.tw/identifier/medical-record",  // chart-number slot: your hospital's namespace
+    "value": "800001"
+  }
+]
+```
+
+That nested extension hanging off `code` (the primitive-extension `_code` idiom plus two child extensions) is **not something you could guess**. We wrote it by copying the official example shipped inside the IG package. That heuristic deserves amplification:
+
+> **Read the profile + copy the official example + let $validate grade you** — the standard three-step for writing conformant mappers.
+
+## Idempotent ETL: deterministic ids + PUT
+
+An ETL will be re-run — data fixes, mapper releases, disaster recovery. Re-runs must not duplicate patients, so:
+
+1. Every resource gets a **deterministic id** (`pat-{chartNo}`, `obs-lab-{labId}`)
+2. Uploads use `PUT` (update-as-create) in a transaction Bundle, not `POST`
+
+```
+First run:  608 resources, all 201 Created
+Re-run:     608 resources, all 200 OK  (updates, not duplicates)
+```
+
+Those two lines of output *are* the idempotency proof. (Privacy footnote: deriving ids from chart numbers is a conscious POC trade-off — ids appear in URLs and logs. Production uses meaningless UUIDs and matches across systems via identifiers.)
+
+## $validate: the referee
+
+A successful upload does not imply conformance (servers don't validate by default). The POC's script samples every profile:
+
+```
+GET {base}/Patient/pat-800001/$validate?profile=<TW Core Patient canonical URL>
+```
+
+Final result: **12 TW Core profiles, 0 errors.** A sentence you can put in CI and in acceptance criteria — because a machine renders it.
+
+## Three real errors, with debugging notes
+
+**Error 1: the bare-bones Patient.** `identifier` and `birthDate` are optional in base R4, required in TW Core. The minimal demonstration that *base-valid ≠ profile-conformant*.
+
+**Error 2: department code in the wrong code system.** NHI code `04` (pediatrics) straight into `serviceType` — rejected. TW Core requires SNOMED for any department that maps to it; the official ConceptMap has the answers (part 4).
+
+**Error 3: you can't even fake an institution code.** Our made-up `POC0000001` was rejected: the hospital profile binds the identifier to the MOHW institution-code value set as *required* — the value must actually exist in the government registry. The POC passed by borrowing a real hospital's code. The deeper lesson: **for some fields you don't even have the freedom to invent test data** — design your test-data strategy early.
+
+## Being honest about warnings
+
+Beyond the 0 errors there are warnings, mainly two kinds — kept verbatim because real projects see them too:
+
+1. `Unable to expand ValueSet ... CodeSystem could not be found: http://loinc.org` — the server lacks the full LOINC content (licensing and size; IGs don't bundle it). Eliminating these requires an external terminology server.
+2. `dom-6: A resource should have narrative` — a best-practice nudge, acceptable to skip in a POC.
+
+Reading rule: **errors are violations and must be fixed; warnings get triaged one by one into an inventory** where every entry has a written justification. "We have 37 warnings, each annotated" is more trustworthy than "we have no warnings."
+
+## The last layer: conformant ≠ correct
+
+A glucose of 9999 mg/dL can pass TW Core validation perfectly — format, codes, required fields all present — and be a clinical catastrophe. `$validate` covers conformance; correctness needs a separate data-quality layer: delta checks, absurd-value interception, reference-range logic. None of this is new — clinical labs have done it for decades; it just needs re-implementing inside the FHIR pipeline.
+
+> **Decision-maker's view**: writing "$validate 0 errors + an annotated warning inventory" into procurement acceptance criteria is one of the few ways to turn a vendor's "we support FHIR" into an auditable fact.
+
+Next: the consuming side — building a FHIR front end with plain `fetch`, and the Search API details that bite.

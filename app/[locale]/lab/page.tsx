@@ -26,6 +26,15 @@ interface SideProject {
 
 const projectsZh: SideProject[] = [
   {
+    id: 'fhir-poc',
+    status: 'poc',
+    title: 'FHIR POC — 從 HIS 到 TW Core 的醫療資料交換全鏈驗證',
+    description:
+      '把「醫院既有 HIS 資料 → 符合衛福部 TW Core IG 1.0.0 的 FHIR 資源 → 標準 API 供應用查詢」整條鏈打穿的 POC：模擬 HIS（SQLite＋台灣在地假資料）、TypeScript ETL（LOINC／SNOMED／ATC 術語對應、$validate 12 種 profile 0 error）、HAPI FHIR Server 與 React 查詢介面。結合 14 年醫檢師經驗與軟體工程，系列文章記錄每個階段的取捨與踩坑。',
+    tags: ['FHIR', 'TW Core IG', 'HAPI FHIR', 'HL7', 'LOINC', 'TypeScript', 'React', 'Docker'],
+    articleSlug: 'fhir-poc-0-why',
+  },
+  {
     id: 'battle-viz',
     status: 'live',
     title: 'Battle Visualizer — 互動式歷史戰役視覺化',
@@ -55,6 +64,15 @@ const projectsZh: SideProject[] = [
 ];
 
 const projectsEn: SideProject[] = [
+  {
+    id: 'fhir-poc',
+    status: 'poc',
+    title: 'FHIR POC — End-to-End Healthcare Data Exchange, from HIS to TW Core',
+    description:
+      'A POC that drives the full chain: legacy HIS data → FHIR resources conformant to Taiwan’s TW Core IG 1.0.0 → standard APIs for client apps. It includes a simulated HIS (SQLite with realistic Taiwanese data), a TypeScript ETL (LOINC/SNOMED/ATC terminology mapping, 12 profiles passing $validate with 0 errors), a HAPI FHIR server, and a React viewer. Built on 14 years of medical-lab experience plus software engineering; the article series documents every trade-off and pitfall.',
+    tags: ['FHIR', 'TW Core IG', 'HAPI FHIR', 'HL7', 'LOINC', 'TypeScript', 'React', 'Docker'],
+    articleSlug: 'fhir-poc-0-why',
+  },
   {
     id: 'battle-viz',
     status: 'live',

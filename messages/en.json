@@ -98,12 +98,14 @@
       "system-design": "System Design",
       "devops": "DevOps & Deployment",
       "ai-collaboration": "Working with AI",
-      "career": "Career & Craft"
+      "career": "Career & Craft",
+      "fhir-healthcare": "Healthcare IT & FHIR"
     },
     "series": {
       "go-with-ai-agent": "Learning Go with an AI Agent",
       "webrtc-poc": "WebRTC POC Series",
-      "news-feed-system-design": "Designing a News Feed System"
+      "news-feed-system-design": "Designing a News Feed System",
+      "fhir-poc": "FHIR POC Series"
     }
   },
   "resume": {

@@ -1,0 +1,88 @@
+---
+title: "A FHIR Front End with Zero SDKs: Three Search Parameter Types and a Pagination Trap"
+date: "2026-07-12"
+description: "Building a patient viewer with plain fetch + React: string/token/reference search parameters, the system|value idiom for identifiers, and a pagination trap with genuine clinical-safety implications."
+tags: ["FHIR", "React", "TypeScript", "REST API", "Frontend"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 6
+---
+
+> **Who this is for**: front-end and full-stack engineers. You'll find the client-side barrier surprisingly low — the whole integration layer is under a hundred lines with zero third-party packages — but a few semantic details will bite if you don't know them.
+
+## No SDK required
+
+The POC front end is Vite + React. The entire FHIR integration layer is one `api.ts`, under 100 lines, zero FHIR packages — because FHIR is REST + JSON and `fetch` suffices. Type safety comes from `@types/fhir`'s ambient types (`fhir4.Patient`, `fhir4.Bundle`).
+
+What you need to learn isn't tooling — it's **search parameter semantics**. FHIR defines several parameter types; this POC uses three.
+
+## string search: names
+
+```
+GET /fhir/Patient?name=劉
+```
+
+String parameters **prefix-match by default** (`劉` finds `劉建宏`). Exact matching takes a modifier: `name:exact=...`.
+
+## token search: identifiers (the important one)
+
+```
+GET /fhir/Patient?identifier=http://www.moi.gov.tw|F185213968
+```
+
+The full token idiom is `system|value`. **Omitting the system is a classic mistake**: `identifier=800003` works — until a chart number happens to collide with a value from some other scheme, and you retrieve the wrong person. In a medical system, "wrong patient" is the worst class of incident there is.
+
+The POC's search box routes automatically by input shape, which neatly demos the division of labor:
+
+| Input | Interpreted as | Search parameter |
+|---|---|---|
+| `F185213968` | national ID | `identifier={MOI system}\|value` |
+| `800003` | chart number | `identifier={hospital MRN system}\|value` |
+| `劉` | name | `name=value` |
+
+This also closes the "two-layer id design" arc: logical ids (`Patient/pat-800001`) are for machine references; business identifiers are for human lookup.
+
+## reference search: one patient's whole chart
+
+```
+GET /fhir/Observation?patient=pat-800001&category=laboratory&_sort=-date&_count=200
+GET /fhir/Encounter?patient=pat-800001&_sort=-date
+GET /fhir/MedicationRequest?patient=pat-800001&_sort=-authoredon
+```
+
+`patient=` is a reference parameter — "every resource whose subject points at this patient." Combined with the token parameter `category`, labs and vitals separate cleanly. The detail page fires five queries in `Promise.all` and assembles a complete view.
+
+Rendering is mostly "walk the profile's structure" — earlier structural decisions pay off here:
+
+- The lab table's **abnormal flags** read straight from `interpretation` (H/L); **reference ranges** from `referenceRange` — the LIS's professional semantics survive intact to the UI
+- **Blood pressure** reassembles `142/88 mmHg` from the two `component`s
+- The **primary-diagnosis** star reads `Encounter.diagnosis.rank` — the reward for choosing a native FHIR field over a custom extension: any FHIR-aware system interprets it without reading our docs
+
+## The pagination trap: silently missing data is a safety issue
+
+FHIR search **paginates by default** (HAPI: 20 per page). If a patient has 250 lab results and you query `_count=200`, the screen will be *quietly* short by 50 — no error, no hint.
+
+In a normal app that's a bug. In a chart viewer it's a **safety incident** — a physician who believes they're seeing the full lab history and one who knows they're seeing part of it are operating on entirely different footing.
+
+The first fix costs almost nothing: `Bundle.total` is already in every search response — display it:
+
+```
+Lab results (showing 200 of 250)   ← flagged when truncated
+20 results                          ← normal when complete
+```
+
+Then, as needed, follow `link[rel=next]` for a "load more." **Honesty first, completeness second** — never the reverse order.
+
+## Trust boundaries: authorization can't live in the front end
+
+The POC's front end reaches the FHIR server through a dev proxy, and anyone can query any patient — fine for a POC, unacceptable in production. Where does "a physician may only query their own patients" belong?
+
+- **Front end**: can *hide*, cannot *block* — one curl bypasses it. Never a security layer.
+- **API gateway**: the right place for authentication and coarse authorization (scopes, rate limits)
+- **A FHIR-aware layer**: patient-scoped rules require understanding FHIR query semantics — that's SMART on FHIR scopes (`patient/Observation.read`) plus compartment-based enforcement at the server
+
+Defense in depth; three layers, three jobs. SMART on FHIR is OAuth2's healthcare specialization — the app ecosystems of Epic and Cerner are built on it. Upgrading our React app to a SMART app mostly means adding the OAuth flow; the data-access code barely changes.
+
+> **Decision-maker's view**: FHIR front-end staffing is cheap (React + REST gets you in the door), but "pagination completeness" and "authorization layering" must be explicit in requirements and acceptance — they're precisely the risks a polished demo conceals.
+
+Next, the series finale: stepping away from code to ask what happens when you carry all of this into a real hospital — and what to do about it.

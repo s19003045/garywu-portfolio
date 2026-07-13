@@ -1,0 +1,81 @@
+---
+title: "Fourteen Years in a Hospital Lab, and the One Problem I Kept Wanting to Engineer Away — Why FHIR"
+date: "2026-07-06"
+description: "Series opener: starting from a medical technologist's daily reality, what healthcare data exchange actually breaks on, and what this POC set out to prove. Includes a reading map for four kinds of readers."
+tags: ["FHIR", "Healthcare IT", "Career", "TW Core"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 0
+---
+
+> **Who this is for**: everyone. This is the series opener with zero code.
+> If you're a recruiter or a non-technical reader, this one article explains what the whole series does and why it matters.
+
+## The journey of one glucose value
+
+Before becoming a software engineer, I spent 14 years as a medical technologist in a hospital laboratory.
+
+A patient gets blood drawn. The analyzer reports glucose at 135 mg/dL. That number travels: instrument → LIS (lab information system) → technologist review and sign-off → HIS (hospital information system) → the physician's screen. Within one hospital, the pipeline works.
+
+But when the same patient visits another hospital next week and that physician wants to see the value, everything breaks:
+
+- The two hospitals run HIS built by different vendors, in different decades, in different languages
+- Our record is coded `GLU-AC`; theirs is `009002` — each hospital's private dialect
+- Even if the file gets through, the receiving system has no idea what `GLU-AC` means, whether the units match, or what the reference range was
+
+So the patient gets their blood drawn again. Time, money, and a patient's arm — all paying for systems that can't talk.
+
+I watched this for 14 years. After switching careers into engineering, I realized I was now standing exactly where the problem could be fixed. Hence this POC, and this series.
+
+## The problem has two layers
+
+Healthcare data exchange is hard because it's two problems stacked:
+
+1. **Syntactic interoperability** — can you parse the data at all?
+2. **Semantic interoperability** — does "glucose" mean the same thing on both sides?
+
+Data that arrives but can't be understood is the same failure as data that never arrives.
+
+**FHIR** (Fast Healthcare Interoperability Resources, pronounced "fire") is the HL7 standard, mainstream since 2014, that addresses both layers: Resources + RESTful APIs for syntax, terminology systems + Profiles for semantics. On top of it, Taiwan's Ministry of Health and Welfare publishes the **TW Core IG** (Implementation Guide), with version 1.0.0 released in late 2025 — rapidly becoming the entry ticket for data exchange between Taiwanese healthcare institutions.
+
+## What this POC proves
+
+Five stages, one complete chain:
+
+```
+Simulated HIS (SQLite, deliberately preserving real Taiwanese HIS quirks:
+               ROC-calendar dates, in-house codes)
+   ↓  TypeScript ETL (terminology mapping, data cleansing, restructuring)
+FHIR Server (HAPI in Docker, TW Core IG 1.0.0 auto-installed)
+   ↓  standard Search API
+React viewer (patient search, lab reports, vital signs, medications)
+```
+
+Verifiable results: 608 FHIR resources uploaded, **12 TW Core profiles machine-validated with 0 errors**, and an ETL that can be re-run without creating duplicates. "Conformant to Taiwan's spec" here is not a slide-deck claim — it's a verdict returned by the `$validate` API.
+
+Every real pitfall we hit — department codes that must be translated to SNOMED, institution codes you can't even fake, a silent SQLite sequence bug — is preserved in the articles. **The stumbles teach more than the successes.**
+
+## A reading map for four kinds of readers
+
+| Who you are | Suggested path | What you'll take away |
+|---|---|---|
+| **Recruiter / HR** | 0 → 4 → 7 | What "medical technologist × software engineer" dual background looks like as rare, applied value |
+| **Hospital IT director** | 0 → 2 → 7 | An adoption architecture that leaves your HIS untouched, an honest list of difficulties, and executable strategies |
+| **Engineer outside healthcare** | 0 → 1 → 3 → 6 | FHIR is REST + JSON — your existing skills transfer directly |
+| **Healthcare engineer** | the whole series, in order | Full hands-on detail from TW Core conformance to debugging notes |
+
+The articles:
+
+1. **[FHIR in fifteen minutes](/en/blog/fhir-poc-1-fhir-for-engineers)** — the shortest path for engineers
+2. **[Leave the HIS alone: a sidecar FHIR architecture](/en/blog/fhir-poc-2-architecture)** — architecture decisions and HAPI in practice
+3. **[Simulating a *realistic* HIS](/en/blog/fhir-poc-3-his-data-model)** — ROC dates, in-house codes, and data debt
+4. **[Making "glucose" mean the same thing everywhere](/en/blog/fhir-poc-4-terminology)** — terminology, my home turf
+5. **[TW Core conformance in practice](/en/blog/fhir-poc-5-twcore-validate)** — slicing, $validate, and three real errors
+6. **[A FHIR front end with zero SDKs](/en/blog/fhir-poc-6-search-api)** — the Search API and a pagination trap
+7. **[FHIR adoption is a data-governance project](/en/blog/fhir-poc-7-adoption)** — difficulties, challenges, strategies
+
+## One sentence before we start
+
+Beyond technical feasibility, this series argues one thing: **the scarcest resource in healthcare IT is not tooling — it's people who speak both clinical and engineering.** An engineer can't tell `GLU-AC` from `GLU-PC`; a medical technologist can't build an ETL pipeline. Those two competencies can live in one person.
+
+Next up: starting from the place engineers know best — what FHIR actually is.

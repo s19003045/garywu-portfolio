@@ -1,0 +1,88 @@
+---
+title: "零 SDK 的 FHIR 前端：Search API 三種參數與分頁陷阱"
+date: "2026-07-12"
+description: "用純 fetch + React 打造病人查詢介面：string／token／reference 三種搜尋參數、identifier 的 system|value 寫法、以及一個臨床上有安全含意的分頁陷阱。"
+tags: ["FHIR", "React", "TypeScript", "REST API", "前端"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 6
+---
+
+> **這篇適合誰**：前端與全端工程師。讀完你會發現 FHIR client 端的門檻低得驚人——整個整合層不到百行、零第三方套件——但有幾個語意細節不知道就會踩。
+
+## 不需要 SDK
+
+POC 的前端是 Vite + React，整個 FHIR 整合層只有一個 `api.ts`、不到 100 行、零 FHIR 套件——因為 FHIR 就是 REST + JSON，`fetch` 就夠了。型別安全由 `@types/fhir` 的全域型別（`fhir4.Patient`、`fhir4.Bundle`）提供。
+
+要學的不是工具，是**搜尋參數的語意**。FHIR 定義了多種參數型態，本 POC 用到三種。
+
+## string 搜尋：姓名
+
+```
+GET /fhir/Patient?name=劉
+```
+
+string 型參數**預設是前綴比對**（`劉` 找得到 `劉建宏`），要精確比對用 modifier：`name:exact=劉建宏`。
+
+## token 搜尋：identifier（最重要的一種）
+
+```
+GET /fhir/Patient?identifier=http://www.moi.gov.tw|F185213968
+```
+
+token 的完整寫法是 `system|value`。**只寫 value 是常見錯誤**：`identifier=800003` 也查得到，但若病歷號與另一套代碼恰好撞號，就會查到錯的人——在醫療系統裡，「查到錯的人」是最嚴重的那類事故。
+
+POC 的搜尋框依輸入樣態自動選路，正好示範三種參數的分工：
+
+| 輸入 | 判定 | 搜尋參數 |
+|---|---|---|
+| `F185213968` | 身分證 | `identifier={MOI system}\|值` |
+| `800003` | 病歷號 | `identifier={本院 MRN system}\|值` |
+| `劉` | 姓名 | `name=值` |
+
+這也是「id 兩層設計」的收尾：邏輯 id（`Patient/pat-800001`）給機器 reference 用，業務識別碼（identifier）給人查詢用，各司其職。
+
+## reference 搜尋：一個病人的完整病歷
+
+```
+GET /fhir/Observation?patient=pat-800001&category=laboratory&_sort=-date&_count=200
+GET /fhir/Encounter?patient=pat-800001&_sort=-date
+GET /fhir/MedicationRequest?patient=pat-800001&_sort=-authoredon
+```
+
+`patient=` 是 reference 型參數——「所有 subject 指向這個病人的資源」。搭配 token 型的 `category` 就能分開撈檢驗與生命徵象。明細頁用 `Promise.all` 平行發五條查詢，一次組出完整視圖。
+
+前端取值幾乎是「照著 profile 的結構走」，前幾篇的結構決策在這裡兌現：
+
+- 檢驗表格的**異常標記**直接讀 `interpretation`（H/L），**參考區間**讀 `referenceRange`——LIS 的專業語意完整走到了 UI
+- **血壓**從 `component` 取收縮/舒張壓組回 `142/88 mmHg`
+- **主診斷**標記讀 `Encounter.diagnosis.rank`——當初選擇 FHIR 原生欄位而非自訂 extension 的回報：任何懂 FHIR 的系統不讀我們的文件也能解讀
+
+## 分頁陷阱：靜默少資料是安全問題
+
+FHIR 搜尋**預設分頁**（HAPI 預設一頁 20 筆）。如果病人有 250 筆檢驗而你查 `_count=200`，畫面會**安靜地**少 50 筆——不報錯、不提示。
+
+一般應用這是 bug；病歷瀏覽這是**安全事故**——醫師以為看到全部檢驗史，和知道自己只看到部分，是兩種完全不同的判讀基礎。
+
+修法的第一步成本近乎零：`Bundle.total` 本來就在每個搜尋回應裡，把它顯示出來——
+
+```
+檢驗結果（顯示 200／共 250）   ← 截斷時明確標示
+共 20 筆                      ← 完整時照常顯示
+```
+
+之後再視需求跟隨 `link[rel=next]` 補「載入更多」。**先誠實、再補齊**，順序不能反。
+
+## 信任邊界：權限不能只做在前端
+
+POC 的前端經 dev proxy 直連 FHIR server，任何人都能查所有病人——POC 可以，正式環境不行。「醫師只能查自己的病人」該做在哪一層？
+
+- **前端**：只能「藏」不能「擋」，curl 一下就繞過——永遠不算防線
+- **API gateway**：管身分認證與粗粒度授權（scope、rate limit）的正確位置
+- **懂 FHIR 的那一層**：「只能查自己的病人」是資料層級規則，執行者必須看得懂 FHIR 查詢語意——這是 SMART on FHIR scopes（`patient/Observation.read`）加上 server 端 compartment 授權的職責
+
+縱深防禦，三層各司其職。SMART on FHIR 是 OAuth2 的醫療特化版，國際上醫院的 app 生態（Epic、Cerner 的 app gallery）都建立在它之上——我們的 React app 要升級成 SMART app，主要是加 OAuth 流程，資料存取程式碼幾乎不變。
+
+> **決策者視角**：FHIR 前端人力門檻低（會 React + REST 即可進場），但「分頁完整性」與「授權層級」兩件事必須寫進需求與驗收——它們是這類系統最容易被 demo 掩蓋的風險。
+
+下一篇是系列收官：離開程式碼，談把這一切帶進真實醫院時，會遇到什麼、怎麼辦。

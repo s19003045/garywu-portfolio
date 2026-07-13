@@ -1,0 +1,78 @@
+---
+title: "Simulating a Realistic HIS: ROC Dates, In-House Codes, and Data Debt"
+date: "2026-07-09"
+description: "If your POC's test data is too clean, you're not testing anything. This article deliberately reproduces Taiwanese HIS conventions — ROC-calendar birthdates, coded genders, blood pressure as two columns — and shows a triage philosophy for legacy data."
+tags: ["FHIR", "HIS", "Legacy System", "Data Modeling", "SQLite"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 3
+---
+
+> **Who this is for**: any engineer who has worked on a legacy system — even outside healthcare, every kind of data debt here will look familiar. Also for IT directors who want to know what "FHIR-ification" actually converts.
+
+## Rule one of test data: make it realistically dirty
+
+The most common self-deception in a POC is spotless test data — complete fields, standard formats, tidy codes — followed by the claim "conversion works fine." Real hospital data doesn't look like that.
+
+So this POC's simulated HIS (SQLite + a data generator) deliberately preserves Taiwanese HIS conventions. **Each one is an exam question for the ETL:**
+
+| HIS convention (faithfully simulated) | Example | What FHIR-ification must do |
+|---|---|---|
+| Gender as in-house codes | `sex = '1'` (male) | code translation → `male` |
+| Birthdate in ROC calendar, 7 digits | `0820821` | normalize → `1993-08-21` |
+| Labs keyed by in-house codes | `GLU-AC` | terminology mapping → LOINC `1558-6` (part 4) |
+| Blood pressure as two columns in one row | `sbp=142, dbp=88` | restructure → one Observation with two components |
+| Numbers stored as TEXT | `value = '7.7'` | type repair → `valueQuantity` + UCUM unit |
+| Frequency/route as abbreviations | `BID`, `PO` | map to structured Timing and route |
+| Relations via chart/visit numbers | `chart_no`, `enc_no` | convert to resource `reference`s |
+
+Two details make it *more real*: national IDs are generated with the **correct checksum algorithm** (real integrations validate the format, so fake data must pass too), and the generator uses a **fixed random seed** — re-running produces byte-identical data, which is what makes the downstream ETL's idempotency testable.
+
+## Two worldviews: HIS serves workflow, FHIR serves exchange
+
+Put the HIS schema and FHIR resources side by side and the difference isn't field names — it's **purpose**.
+
+An HIS data model is the fossil record of one hospital's workflow and claims logic: the encounters table has a department code because NHI claims require one; lab results carry a signing technologist because accreditation demands accountability. Perfectly rational — inside that one hospital.
+
+FHIR reorganizes the same facts into a patient-rooted graph where every node carries complete semantics. The most instructive mental shift: **one HIS row does not equal one FHIR resource** —
+
+- one `lab_results` row → one `Observation` (1:1)
+- one `vital_signs` row → **up to five** `Observation`s (blood pressure as one resource with two components; temperature, heart rate, height, weight each their own)
+- converting `lab_results` also **spawns other resources**: the signing technologist is a string column, but in FHIR people are first-class citizens — you must create a `Practitioner` and reference it
+
+That last point reveals what mapping really is: **not table-by-table conversion, but reshaping a relational model into a resource graph** — with a dependency order. Directory resources (people, organizations) are the foundation everything else references; build them first.
+
+## Triaging dirty data: a lab SOP, translated into engineering
+
+Suppose the HIS contains a birthdate of `0080230` — February 30th, year 8 of the ROC calendar. A date that doesn't exist, but old systems really do contain such things. What should the ETL do?
+
+Options: (a) skip the whole patient, (b) drop the field and forward the rest silently, (c) block it for human review.
+
+Fourteen years in a lab made (c) my reflex: when an analyzer returns an implausible value, you don't guess a number for the report, and you don't pretend you didn't see it — you hold it and re-check. That SOP translated directly into the ETL's design:
+
+```
+Critical fields (national ID, birthdate, lab values) fail → block, add to
+  a rejected list, exit non-zero
+Optional fields missing → mark explicitly with FHIR's data-absent-reason
+Never → guess values, or drop data silently
+```
+
+**The rejection rate is a project health metric.** A high early rate isn't ETL failure — it's the project inventorying the hospital's historical debt, one blocked record at a time.
+
+## A bug that only re-running could expose
+
+One real bug to close with. The ETL was designed to be idempotent (re-runs must not duplicate data — details in part 5). Final verification found that after regenerating the test data, a batch of resources was created as *new*.
+
+The culprit was SQLite: `AUTOINCREMENT` sequences live in the `sqlite_sequence` table, and `DELETE FROM` **does not reset them**. After re-seeding, lab-result ids continued from the previous run's tail; the FHIR resource ids derived from them silently drifted, and idempotency shattered without a sound.
+
+```sql
+-- the fix in the seed script: clear data *and* reset sequences
+DELETE FROM lab_results;
+DELETE FROM sqlite_sequence;   -- without this, deterministic ids aren't
+```
+
+This class of bug never shows up in a run-once demo. Only a full end-to-end re-run forces it out — **a POC's value is not in building the thing, but in verifying it.**
+
+> **Decision-maker's view**: the biggest schedule risk in FHIR projects isn't FHIR — it's the volume of the historical debt in this article. A pre-project data-quality audit (sample the dirty-data rate of critical fields) makes your timeline estimates dramatically more honest.
+
+Next is the article I most wanted to write: terminology — why "making glucose mean the same thing everywhere" is so hard, and why that difficulty happens to need people with my exact background.

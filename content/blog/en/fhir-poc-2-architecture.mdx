@@ -1,0 +1,105 @@
+---
+title: "Leave the HIS Alone: A Sidecar FHIR Architecture with HAPI in Practice"
+date: "2026-07-08"
+description: "The most expensive misconception about FHIR adoption is 'we must rewrite the HIS.' This article explains the sidecar architecture, then stands up a HAPI FHIR server preloaded with TW Core IG — including two real environment pitfalls."
+tags: ["FHIR", "HAPI FHIR", "System Architecture", "Docker", "TW Core"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 2
+---
+
+> **Who this is for**: hospital IT directors (the architecture half) and engineers (the hands-on half).
+> You'll learn why you should never write your own FHIR server, why the HIS can stay untouched, and get a Docker setup you can copy.
+
+## The costliest misconception: "FHIR adoption = rewriting the HIS"
+
+If adopting FHIR meant touching the HIS core, no hospital would ever do it — that system runs registration, billing, and physician orders; a single day of downtime is an incident.
+
+The mainstream pattern is a **sidecar**:
+
+```
+HIS (existing system — not one line changed)
+   │  data outlet (DB views / batch files / message queue)
+   ▼
+ETL / integration layer (transform, terminology mapping, cleansing)  ← effort goes here
+   ▼
+FHIR Server (off-the-shelf; the exchange-facing data platform / CDR)
+   ▲
+Applications (cross-hospital viewers, research platforms, SMART apps…)
+```
+
+This shrinks the vendor negotiation from "modify your system" to "give us a data outlet" — an order of magnitude cheaper and safer. The alternative is a *facade* (no data copy; translate FHIR calls into live HIS queries), but a facade must translate FHIR's full search semantics — token/reference parameters, date ranges, pagination — into legacy SQL on the fly. That's half a FHIR server built by hand, and it usually only fits a single narrow API. **Default to the sidecar copy; reserve facades for exceptions.**
+
+## Why you don't write your own FHIR server
+
+The FHIR spec runs to thousands of pages: search modifiers, `_include`, paging, transaction semantics, a profile-validation engine. Implementing it is a product-grade effort. The industry answer is **HAPI FHIR JPA Server**, the most mature open-source implementation.
+
+"But it's Java and we're a Node shop" — irrelevant. **FHIR is about the API boundary; the server's internals are nobody's business.** This POC is TypeScript + React end to end; HAPI is just a container. We never touched a line of Java.
+
+## Hands-on: a config you can copy
+
+One `docker-compose.yml` plus one `application.yaml` gives you a server that speaks Taiwan's rules:
+
+```yaml
+# hapi/application.yaml (excerpt)
+hapi:
+  fhir:
+    fhir_version: R4
+    # The soul of this config: download & install TW Core IG at startup
+    implementationguides:
+      twcore:
+        name: tw.gov.mohw.twcore
+        version: 1.0.0
+        installMode: STORE_AND_INSTALL
+    # Allow client-assigned ids via PUT (key to idempotent ETL, see part 5)
+    client_id_strategy: ALPHANUMERIC
+```
+
+`STORE_AND_INSTALL` loads the IG package's 300+ conformance resources (profile definitions, code systems, value sets) into the database — after which `$validate` can referee against Taiwan's rules.
+
+FHIR IGs ship via an npm-like package registry: `tw.gov.mohw.twcore@1.0.0` lives on [packages.fhir.org](https://packages.fhir.org). "Installing a country's healthcare regulations" feels exactly like `npm install` — a small window into how mature this ecosystem has become.
+
+## Two real pitfalls (so you can skip them)
+
+**Pitfall 1: port collisions.** The host's 8080 was already taken, and the first `docker compose up` failed. Trivial — but a reminder that hospital servers always run things you don't know about. Treat port planning as real work.
+
+**Pitfall 2: volume permissions on distroless images.** The official HAPI image is distroless and runs as a non-root user (uid 65532) — good security practice. But Docker named volumes mount as root-owned, so the embedded database died with `AccessDenied` and the container crash-looped. Fix: an init service that fixes ownership first:
+
+```yaml
+services:
+  init-data:
+    image: busybox:1.36
+    command: chown -R 65532:65532 /data
+    volumes: [hapi-data:/data]
+  fhir-server:
+    image: hapiproject/hapi:v8.10.0-2
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+```
+
+The "container security vs. data persistence" permission clash is near-guaranteed when self-hosting healthcare systems. Put it on your checklist.
+
+## Proving it really knows Taiwan's rules
+
+Once up, deliberately validate a bare-bones patient:
+
+```bash
+curl -X POST "http://localhost:8090/fhir/Patient/\$validate?profile=\
+https://twcore.mohw.gov.tw/ig/twcore/StructureDefinition/Patient-twcore" \
+  -H "Content-Type: application/fhir+json" \
+  -d '{"resourceType":"Patient","name":[{"text":"Test"}],"gender":"male"}'
+```
+
+Response:
+
+```
+error: Patient.identifier: minimum required = 1, but only found 0
+error: Patient.birthDate: minimum required = 1, but only found 0
+```
+
+Base FHIR R4 requires neither field. These two errors prove the server is checking **Taiwan's** rules. From this moment, "TW Core conformant" is a machine verdict, not a marketing claim.
+
+> **Decision-maker's view**: note the cost structure — the FHIR server itself (off-the-shelf, open source, one container) is nearly a zero-cost item. Money and time go to the integration layer and terminology mapping (parts 3–4). If a vendor quote shows "FHIR server construction" as a major line item, ask more questions.
+
+Next: the source of the data — a simulated HIS built to be *realistically messy*, and every piece of very Taiwanese data debt it carries.

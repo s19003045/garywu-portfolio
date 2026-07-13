@@ -1,0 +1,105 @@
+---
+title: "HIS 不動：旁掛式 FHIR 架構與 HAPI Server 實戰"
+date: "2026-07-08"
+description: "導入 FHIR 最常見的誤解是「HIS 要重寫」。本篇說明旁掛式架構的決策邏輯，並實際用 Docker 起一台載好 TW Core IG 的 HAPI FHIR Server——含兩個真實踩到的環境坑。"
+tags: ["FHIR", "HAPI FHIR", "系統架構", "Docker", "TW Core"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 2
+---
+
+> **這篇適合誰**：醫院資訊部門主管（架構決策段）與工程師（實戰段）。
+> 讀完你會知道：為什麼 FHIR Server 不該自己寫、HIS 為什麼可以不動、以及一份能直接抄的 Docker 設定。
+
+## 最貴的誤解：「導入 FHIR = 重寫 HIS」
+
+如果導入 FHIR 意味著動 HIS 核心，那沒有一家醫院敢做——HIS 上面跑著掛號、批價、醫囑，停一天都是事故。
+
+實務上的主流架構是**旁掛（sidecar）**：
+
+```
+HIS（既有系統，一行不改，繼續跑）
+   │  資料出口（DB view / 批次檔 / 訊息佇列）
+   ▼
+ETL / 整合層（轉換、術語對應、資料清洗）←—— 開發火力集中在這裡
+   ▼
+FHIR Server（現成方案，交換用資料平台／CDR）
+   ▲
+應用（跨院查詢、研究平台、SMART app……）
+```
+
+這個架構把和 HIS 廠商的談判標的從「改造系統」縮小為「提供資料出口」，成本與風險低一個數量級。另一派做法是 facade（不落地、即時轉譯查 HIS），但 facade 要即時把 FHIR 的搜尋語意（token、reference、日期範圍、分頁……）翻譯成 legacy 資料庫的 SQL——等於自己實作半個 FHIR server，通常只適合極窄的單一用途 API。**預設旁掛複製、例外才 facade**。
+
+## FHIR Server 為什麼不自己寫
+
+FHIR 規格書上千頁：搜尋修飾詞、`_include`、分頁、transaction 語意、Profile 驗證引擎……自己實作是產品等級的工程。業界標準做法是拿現成的——**HAPI FHIR JPA Server** 是最成熟的開源實作。
+
+「但它是 Java 寫的，我們團隊是 Node.js」——沒關係。**FHIR 的重點是 API 邊界，server 內部是什麼語言無關緊要。** 本 POC 的技術棧是 TypeScript + React，HAPI 只是一個 Docker 容器，我們從頭到尾沒碰過一行 Java。
+
+## 實戰：一份能直接抄的設定
+
+`docker-compose.yml` 加一份 `application.yaml`，就是一台載好台灣規範的 FHIR Server：
+
+```yaml
+# hapi/application.yaml（節錄）
+hapi:
+  fhir:
+    fhir_version: R4
+    # 靈魂設定：啟動時從官方 registry 下載並安裝 TW Core IG
+    implementationguides:
+      twcore:
+        name: tw.gov.mohw.twcore
+        version: 1.0.0
+        installMode: STORE_AND_INSTALL
+    # 允許 client 以自訂 id + PUT 建立資源（ETL 冪等的關鍵，見第 5 篇）
+    client_id_strategy: ALPHANUMERIC
+```
+
+`STORE_AND_INSTALL` 會把 IG package 裡 300 多個 conformance 資源（Profile 定義、代碼系統、值集）灌進資料庫——從此這台 server「懂」台灣規則，可以用 `$validate` 當裁判。
+
+FHIR 的 IG 用類似 npm 的套件機制發行：`tw.gov.mohw.twcore@1.0.0` 就發布在 [packages.fhir.org](https://packages.fhir.org)。對工程師來說，「安裝一國的醫療規範」和 `npm install` 是同一種體驗——這是 FHIR 生態成熟度的一個縮影。
+
+## 兩個真實踩到的坑（保留給你避開）
+
+**坑一：port 衝突。** 主機的 8080 被既有服務占用，第一次 `docker compose up` 就失敗。小事，但提醒了一件常被忽略的事：醫院的伺服器上永遠有你不知道的東西在跑，**port 規劃要當一回事**。
+
+**坑二：distroless 容器的 volume 權限。** HAPI 官方 image 基於 distroless、以非 root 使用者（uid 65532）執行——這是好的安全實務，但 Docker named volume 掛進去是 root 擁有的，H2 資料庫一建目錄就 `AccessDenied`，容器陷入 crash loop。解法是在 compose 加一個 init 服務先修正擁有者：
+
+```yaml
+services:
+  init-data:
+    image: busybox:1.36
+    command: chown -R 65532:65532 /data
+    volumes: [hapi-data:/data]
+  fhir-server:
+    image: hapiproject/hapi:v8.10.0-2
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+```
+
+「容器安全性 vs 資料持久化」的權限衝突，在自架醫療系統時幾乎必踩，值得記進 checklist。
+
+## 驗證它真的懂台灣規則
+
+Server 起來後，故意丟一個只有姓名、性別的陽春病人去驗證：
+
+```bash
+curl -X POST "http://localhost:8090/fhir/Patient/\$validate?profile=\
+https://twcore.mohw.gov.tw/ig/twcore/StructureDefinition/Patient-twcore" \
+  -H "Content-Type: application/fhir+json" \
+  -d '{"resourceType":"Patient","name":[{"text":"測試病人"}],"gender":"male"}'
+```
+
+回應：
+
+```
+error: Patient.identifier: minimum required = 1, but only found 0
+error: Patient.birthDate: minimum required = 1, but only found 0
+```
+
+基礎 FHIR R4 完全不要求這兩個欄位——這兩行 error 證明 server 是在用**台灣的**規則檢查。「符合 TW Core」從這一刻起是機器判定的事實，不是簡報宣稱。
+
+> **決策者視角**：這一段的成本結構值得留意——FHIR Server 本身（現成、開源、Docker 一鍵）幾乎是零成本項，錢和時間實際花在整合層與術語對應（第 3、4 篇）。評估廠商報價時，如果「FHIR Server 建置」是大項目，值得多問幾句。
+
+下一篇我們去看資料的源頭：一個刻意做得「像真的」的模擬 HIS，以及它身上每一條台灣特色的歷史債。

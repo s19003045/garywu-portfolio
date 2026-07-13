@@ -1,0 +1,77 @@
+---
+title: "FHIR Adoption Is Not an IT Project — It's a Data Governance Project"
+date: "2026-07-13"
+description: "Series finale: what stands between a working POC and a hospital that actually adopts it? An honest inventory of difficulties across technology, organization, and standards — and seven executable strategies."
+tags: ["FHIR", "Healthcare IT", "Adoption Strategy", "Data Governance", "Systems Thinking"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 7
+---
+
+> **Who this is for**: hospital IT directors (this one is written for you), decision-makers evaluating healthcare projects, and engineers who want the half of the story that isn't code. Parts 1–6 answered *how to build it*; this answers *how to land it*.
+
+## Where it's hard: an honest three-front inventory
+
+### Technology
+
+**The legacy HIS is a black box.** This POC's simulated HIS was built by us, schema in plain sight. A real hospital's HIS may be twenty years old: documentation lost, column meanings alive only in a senior engineer's memory, vendor APIs nonexistent. Just *finding out where the data is and what it looks like* routinely consumes the first third of a project.
+
+**Data quality is worse than you think.** February 30th in the ROC calendar genuinely exists in old systems. One patient with multiple chart numbers; units changed three times without back-filling. FHIR-ification is a truth serum — every piece of historical debt surfaces in the ETL's rejection list.
+
+**Terminology mapping is a time sink.** The POC mapped 10 lab tests; a real hospital has thousands of tests and tens of thousands of drug records, all needing clinical review (part 4). It is the least compressible line on the schedule.
+
+**Security and privacy.** The same properties that make data easy to exchange make it easy to leak. Authorization (SMART on FHIR), audit trails, de-identification — every one is a mandatory question in production.
+
+### Organization (usually harder than the technology)
+
+**The HIS vendor's business model.** Most small-to-mid Taiwanese hospitals outsource their HIS; the vendor's revenue model is "one interface change, one invoice." Standardization erodes that income long-term, so enthusiasm is structurally limited. Whether the contract contains a *data portability* clause directly sets your project's cost.
+
+**IT department reality.** Hospital IT runs on maintenance, with hard deadlines from NHI claim-format updates and accreditation. Without dedicated headcount, the FHIR project becomes "when we have time" — which is never.
+
+**The first-mover dilemma.** An exchange standard's value comes from network effects: the first hospital pays the costs and reaps no cross-hospital benefit. Individual business rationality won't start the flywheel — policy incentives are essential.
+
+**Dual-background talent is scarce.** People who know FHIR don't know lab workflow; people who know the clinic don't know REST. Requirements translation and acceptance testing both bottleneck on bridge people.
+
+### Standards
+
+TW Core is still evolving (0.3.2 → 1.0.0 included breaking changes — this POC hit several), so version upgrades need a regression harness. Needs the IG doesn't cover require extensions, but every custom extension is a step back toward non-interoperability — discipline required: **native mechanisms first, extensions as a last resort**. And NHI claim formats aren't going away: FHIR is *an additional track*, not a replacement — plan resources accordingly.
+
+## Seven strategies
+
+**1. Cut in vertically: one use case, full depth.** Don't launch "FHIR-ify the whole hospital" — a project sized to fail. Pick one case with clear value and bounded scope — lab-report exchange is the classic first choice (most structured data, mature LOINC, real cross-hospital demand) — and drive the entire chain through. This series' POC is a scale model of exactly that path.
+
+**2. Sidecar CDR; leave the HIS alone.** Shrink the vendor negotiation to "give us a data outlet." Use a mature open-source or cloud FHIR server; building your own is not a fight a hospital should pick (part 2).
+
+**3. Tiered data quality.** Critical fields that fail validation get blocked into a human-review queue; missing optional fields get explicit `data-absent-reason` annotations; treat the rejection rate as a health metric — high early numbers are the project paying down historical debt (part 3).
+
+**4. Institutionalize terminology governance.** A standing mapping working group (IT + lab + pharmacy + records, with sign-off like a lab report); store the maps as ConceptMap resources on the server — versioning, auditing, and the `$translate` API come free — not in scattered Excel files (part 4).
+
+**5. Automate conformance into CI.** "TW Core conformant" must be a machine verdict, re-run on every mapper change and every IG upgrade. And remember conformant ≠ correct — clinical-plausibility checks (delta checks, absurd values) are a separate layer (part 5).
+
+**6. Staged roadmap, policy tailwinds.** POC → pilot (one department, real data, small user group) → expansion → operations, each stage with quantitative gates (rejection rate, validation pass rate, query latency). Align with MOHW programs and accreditation incentives so the project rides the policy train — the practical answer to the first-mover dilemma.
+
+**7. Invest in bridge people.** Institutions can be bought and software rented; dual-background people can only be grown. Teaching a clinically-trained colleague to read profiles, or sending an engineer to shadow a day in the lab, moves the success needle more than another tool purchase.
+
+## One-page summary
+
+| Challenge | Response |
+|---|---|
+| Closed legacy HIS | Sidecar CDR; demand only a data outlet |
+| Poor data quality | Tiered blocking; rejection list as a debt ledger |
+| Terminology volume | Governance group + ConceptMap resources + rolling batches |
+| Vendor cooperation | Data-portability clauses; shrink the negotiation |
+| Staffing & engagement | Vertical slices, executive sponsorship, policy incentives |
+| Evolving standards | Conformance in CI; upgrade regression; extension discipline |
+| First-mover dilemma | Harvest internal value first (data platform, research, dashboards); exchange value follows the ecosystem |
+
+## Closing
+
+Eight articles, three sentences to keep:
+
+1. **Technically**, FHIR is now home turf for web engineers — REST + JSON + an open-source toolchain; the barrier is domain knowledge, not tooling
+2. **Methodologically**, conformance must be machine-verifiable, data quality must be tiered, and pitfalls should be preserved as teaching material
+3. **Fundamentally**, FHIR adoption is a data-governance project — technology decides whether it *can* be built; governance decides whether it *survives*
+
+And running through all of it, the scarcest role: someone who speaks both clinical and engineering. I spent 14 years learning the first language and a career change learning the second — this series is my translation practice.
+
+(The complete code, teaching docs, and debugging notes live in the POC project; if the implementation details interest you, start from the [series opener](/en/blog/fhir-poc-0-why)'s reading map.)

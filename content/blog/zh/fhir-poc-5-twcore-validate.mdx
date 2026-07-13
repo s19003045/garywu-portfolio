@@ -1,0 +1,95 @@
+---
+title: "TW Core 合規實戰：slicing、$validate 與我們踩過的三個坑"
+date: "2026-07-11"
+description: "「符合 TW Core」不是自由心證，是機器判定。本篇實作身分證/病歷號的 identifier slicing、冪等的 ETL 上傳，並用 $validate 讓 12 種 profile 通過 0 error——含三個真實 error 的除錯記錄。"
+tags: ["FHIR", "TW Core", "Profile", "Validation", "TypeScript"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 5
+---
+
+> **這篇適合誰**：要實際寫 TW Core 合規程式的醫療產業工程師——這是全系列乾貨密度最高的一篇。非醫療工程師可以把 TW Core 換成任何「規範疊在寬鬆基礎上」的場景（OpenAPI 擴充、JSON Schema profile），機制完全相通。
+
+## Profile 的核心技術：slicing
+
+Profile 是在寬鬆的基礎資源上加規則。其中最需要理解的機制是 **slicing**：把一個重複欄位（陣列）切成多個「槽位」，各自規範。
+
+TW Core 把 `Patient.identifier` 陣列切成身分證槽、病歷號槽、護照槽、居留證槽。驗證器靠**鑑別器（discriminator）**判斷陣列裡每個元素落在哪個槽，再用該槽的規則檢查。實作出來長這樣：
+
+```json
+"identifier": [
+  {
+    "type": { "coding": [{
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+      "code": "NNxxx",
+      "_code": { "extension": [{
+        "url": "https://twcore.mohw.gov.tw/ig/twcore/StructureDefinition/identifier-suffix",
+        "extension": [
+          { "url": "suffix", "valueString": "TWN" },
+          { "url": "valueSet", "valueCanonical": "http://hl7.org/fhir/ValueSet/iso3166-1-3" }
+        ]
+      }] }
+    }] },
+    "system": "http://www.moi.gov.tw",       // 身分證槽：system 固定
+    "value": "F185213968"
+  },
+  {
+    "type": { "coding": [{ "system": ".../v2-0203", "code": "MR" }] },
+    "system": "https://poc-hosp.example.tw/identifier/medical-record",  // 病歷號槽：本院命名空間
+    "value": "800001"
+  }
+]
+```
+
+那個掛在 `code` 上的巢狀 extension（primitive extension 的 `_code` 寫法＋兩層子 extension）**不是猜得出來的**。我們的做法是直接翻 IG package 內附的官方範例照著寫。這條心法值得放大：
+
+> **讀 profile 定義 + 抄官方範例 + 用 $validate 對答案**——寫合規 mapper 的標準三步。
+
+## 冪等的 ETL：deterministic id + PUT
+
+ETL 一定會重跑——資料修正、mapper 改版、災難重建。重跑不能產生重複病人，所以：
+
+1. 每筆資源用**確定性 id**（`pat-{病歷號}`、`obs-lab-{檢驗流水號}`）
+2. 上傳用 `PUT`（update-as-create）組成 transaction Bundle，而不是 `POST`
+
+```
+第一次執行：608 筆全部 201 Created
+重跑一次： 608 筆全部 200 OK（更新，不是重複建立）
+```
+
+實測這兩行輸出，就是冪等性的證明。（附帶的隱私註記：用病歷號當 id 是 POC 的有意識妥協——id 會出現在 URL 和 log 裡，正式環境用無意義的 UUID，跨系統比對靠 identifier。）
+
+## $validate：合規的裁判
+
+上傳成功不代表合規（server 預設不強制驗證）。POC 的驗證腳本對每種 profile 抽樣呼叫：
+
+```
+GET {base}/Patient/pat-800001/$validate?profile=<TW Core Patient 的 canonical URL>
+```
+
+最終結果：**12 種 TW Core profile、0 error**。這句話可以放進 CI、放進驗收條款——因為它是機器判的。
+
+## 三個真實 error 的除錯記錄
+
+**Error 1：陽春 Patient 缺必填。**`identifier` 與 `birthDate` 在基礎 R4 都是選填，TW Core 全部必填。這是「基礎合法 ≠ profile 合規」的最小示範。
+
+**Error 2：科別代碼放錯代碼系統。** 健保碼 `04`（兒科）直接放 `serviceType` 被擋——TW Core 規定能對應 SNOMED 的科別必須用 SNOMED，需查官方 ConceptMap 轉換（詳見第 4 篇）。
+
+**Error 3：機構代碼連假資料都不能編。** 我們自訂的 `POC0000001` 被擋，因為 TW Core 醫院 profile 的 identifier 綁定「醫事司醫事機構代碼」**必選值集**——值必須真實存在於衛福部代碼表。POC 最後借用一家真實醫院的代碼通過驗證。這個 error 的啟示很深：**有些欄位你連編假資料的自由都沒有**，測試資料策略要提前設計。
+
+## 誠實面對 warning
+
+0 error 之外還有 warning，主要兩類，保留原樣因為真實專案也會遇到：
+
+1. `Unable to expand ValueSet ... CodeSystem could not be found: http://loinc.org`——server 沒裝完整 LOINC 代碼庫（授權與體積因素，IG 不會內含），要消除需外接術語伺服器
+2. `dom-6: A resource should have narrative`——最佳實務建議，POC 可略過
+
+判讀原則：**error 是違規必須修；warning 逐條判斷並建立盤點清單**，說得出每一條為什麼可接受。「我們有 37 個 warning，每個都有註記」比「我們沒有 warning」更值得信任。
+
+## 最後一層：合規 ≠ 正確
+
+一筆血糖 9999 mg/dL 可以完美通過 TW Core 驗證——格式、代碼、必填全對，臨床上是災難。`$validate` 只管 conformance；correctness 要靠另一層資料品質機制——delta check、極端值攔截、參考區間邏輯。這些概念不新，檢驗室做了幾十年，只是要在 FHIR 管線裡重新落地。
+
+> **決策者視角**：把「$validate 0 error + warning 盤點清單」寫進採購驗收條款,是少數能把「符合 FHIR 標準」這句廠商話術變成可稽核事實的方法。
+
+下一篇轉到消費端：用純 `fetch` 打造 FHIR 前端，以及 Search API 裡那些會咬人的細節。

@@ -1,0 +1,101 @@
+---
+title: "FHIR in Fifteen Minutes: It's REST + JSON + Terminology Discipline"
+date: "2026-07-07"
+description: "The shortest path into FHIR for software engineers: Resources, RESTful APIs, CapabilityStatement, and Profiles. Your existing web skills transfer directly."
+tags: ["FHIR", "REST API", "Healthcare IT", "HL7"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 1
+---
+
+> **Who this is for**: software engineers with no healthcare background. By the end you'll see the learning curve is gentler than expected — the hard part is domain knowledge, and this series feeds it to you as you go.
+
+## The punchline first: you already know half of it
+
+FHIR in one sentence: **model the medical world as ~150 standardized JSON resources, exchanged over RESTful APIs.**
+
+```bash
+GET  /fhir/Patient/123                 # read a patient
+POST /fhir/Observation                 # create a lab result
+GET  /fhir/Observation?patient=123&code=2345-7&date=ge2026-01-01
+                                       # search this patient's glucose history
+```
+
+If you've built any REST API, you can read all of that. The previous generations of healthcare standards (HL7 v2's pipe-delimited messages, HL7 v3's giant XML) read like an alien language to web engineers. FHIR is HL7's do-over, rebuilt on the web's native stack: HTTP, REST, JSON, OAuth.
+
+## Resources: standardized building blocks
+
+FHIR models clinical facts as resources. The handful you'll touch first:
+
+| Resource | Clinical concept |
+|---|---|
+| `Patient` | demographics |
+| `Encounter` | one visit (outpatient / ER / admission) |
+| `Condition` | a diagnosis (e.g., type 2 diabetes) |
+| `Observation` | lab values, blood pressure, temperature — any measured fact |
+| `MedicationRequest` | a prescription |
+| `Practitioner` / `Organization` | clinicians / institutions |
+
+Resources link via `reference`, forming a graph rooted at the patient:
+
+```
+Patient ◄── Encounter ◄── Condition (diagnoses)
+                      ◄── Observation (labs, vitals)
+                      ◄── MedicationRequest (medications)
+```
+
+A real lab result from this POC:
+
+```json
+{
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {
+    "coding": [{ "system": "http://loinc.org", "code": "4548-4",
+                 "display": "Hemoglobin A1c/Hemoglobin.total in Blood" }],
+    "text": "HbA1c"
+  },
+  "subject": { "reference": "Patient/pat-800001" },
+  "valueQuantity": { "value": 7.7, "unit": "%",
+                     "system": "http://unitsofmeasure.org", "code": "%" },
+  "referenceRange": [{ "low": { "value": 4.0 }, "high": { "value": 5.6 } }],
+  "interpretation": [{ "coding": [{ "code": "H" }] }]
+}
+```
+
+Two things to notice: the value carries a **standardized unit** (UCUM), and the test is identified by a **globally unique code** (LOINC `4548-4` means hemoglobin A1c anywhere on Earth). That's the "terminology discipline" — FHIR's answer to semantic interoperability, explored in part 4.
+
+## A FHIR server is more than a database
+
+A conformant FHIR server promises a whole suite of standard behavior, out of the box:
+
+- **CRUD + automatic versioning**: every update keeps history (healthcare data needs an audit trail by nature); `GET /Patient/123/_history/2` retrieves old versions
+- **Standardized search**: defined parameters, modifiers, and pagination per resource type
+- **Transactions**: all-or-nothing bundles
+- **Validation**: `$validate` — post a resource, get told exactly where it violates a spec (the star of part 5)
+- **Self-description**: `GET /metadata` returns a `CapabilityStatement` — a machine-readable "here's what I support"
+
+Pause on that last one: traditional system integration starts with meetings and spec documents. FHIR's API contract is **machine-readable**. If you've done enterprise integration work, this is the difference you'll feel first.
+
+## A loose base spec + tightening Profiles
+
+The FHIR base spec is deliberately loose — `Patient` has almost no required fields, because it serves the whole world. The cost: two systems can each be 100% valid FHIR and still fail to interoperate, because one omitted the identifier's namespace and the other used local lab codes.
+
+The fix is **Profiles**: rules layered onto base resources (which fields are required, which code systems are allowed), packaged and published as an **Implementation Guide (IG)**. The US has US Core; Taiwan has the MOHW's **TW Core IG** — v1.0.0 released December 2025 — which mandates, for example:
+
+- The national ID goes in `identifier` with `system` fixed to `http://www.moi.gov.tw`
+- `identifier`, `gender`, and `birthDate` are required on Patient (base R4 requires none of them)
+- Diagnoses use the ICD-10-CM edition used for Taiwan's NHI claims
+
+**Interoperability = base FHIR + a shared Profile + automated validation.** That's the most important formula in this series.
+
+## An engineer's on-ramp
+
+- Types: `@types/fhir` ships complete TypeScript definitions (`fhir4.Patient`, `fhir4.Observation`, …)
+- Server: don't write one — open-source HAPI FHIR in Docker is a full implementation (next article)
+- Client: no SDK needed; `fetch` suffices (part 6 shows the whole thing)
+- Docs: [hl7.org/fhir](https://hl7.org/fhir/) (R4), and the [TW Core IG](https://twcore.mohw.gov.tw/ig/twcore/) for Taiwan
+
+> **Decision-maker's view**: FHIR's practical meaning for engineering teams is that healthcare integration goes from specialty work back to web work. The talent pool that knows REST + JSON vastly outnumbers the one that knows HL7 v2 — which directly shapes your staffing cost and supply.
+
+Next: hands-on — standing up a FHIR server preloaded with Taiwan's rules, without touching the existing HIS.

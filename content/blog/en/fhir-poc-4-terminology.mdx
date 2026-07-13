@@ -1,0 +1,78 @@
+---
+title: "Making 'Glucose' Mean the Same Thing Everywhere: LOINC and the Terminology Time Sink"
+date: "2026-07-10"
+description: "The real bottleneck in healthcare data exchange isn't format — it's meaning. From a medical technologist's mapping-table experience to FHIR's terminology machinery: LOINC, UCUM, SNOMED, and one hard-earned lesson about trusting official maps over memory."
+tags: ["FHIR", "LOINC", "Terminology", "SNOMED CT", "Healthcare IT"]
+category: "fhir-healthcare"
+series: "fhir-poc"
+order: 4
+---
+
+> **Who this is for**: everyone — this is the article I'm most qualified to write in the whole series. Technical readers get the mechanics of FHIR terminology; non-technical readers (including recruiters) will see exactly why "knows the lab *and* knows software" is such a rare combination.
+
+## You already understand terminology systems — you just called them "test-code mapping tables"
+
+Every hospital LIS has its own lab item codes. Our fasting glucose was `GLU-AC`; the hospital across town used `009002`; the analyzer's output used a third scheme. Fine for internal use — a disaster the moment data leaves the building: NHI claims need a mapping, inter-hospital referrals need a mapping, replacing an analyzer means redoing the mapping.
+
+In 14 years in the lab, I maintained those tables more times than I can count. What I didn't know then: this problem has an international, formal solution — and it's the foundation of FHIR's semantic interoperability.
+
+## system + code: global coordinates for meaning
+
+FHIR requires that a code always be a triple:
+
+```json
+{
+  "system": "http://loinc.org",    // which code system (the namespace)
+  "code": "1558-6",                // the code within that system
+  "display": "Fasting glucose [Mass/volume] in Serum or Plasma"
+}
+```
+
+A `code` without a `system` is meaningless — `04` means pediatrics in the NHI department table and could mean anything elsewhere. **Only system + code together form a globally unique semantic coordinate**: `http://loinc.org|1558-6` is fasting glucose anywhere on Earth, no more, no less.
+
+This POC's mapping table covers six domains — each row simulating a real adoption project's working papers:
+
+| Domain | In-house representation | Standard system | Example |
+|---|---|---|---|
+| Lab tests | `GLU-AC` | **LOINC** | `1558-6` |
+| Units | free text | **UCUM** | `mg/dL`, `10*3/uL` |
+| Vital signs | column names `sbp`/`dbp` | **LOINC** | `8480-6` / `8462-4` |
+| Diagnoses | ICD-10-CM | ICD-10-CM 2023 (TW Core edition) | `E11.9` |
+| Medications | NHI drug codes | **ATC** | `A10BA02` (metformin) |
+| Departments | NHI dept codes | **SNOMED CT** | `419192003` (internal medicine) |
+
+Even *units* are codes: white-cell counts get written `K/uL`, `x10E3/uL`, `10³/µL` depending on the hospital; UCUM's canonical form is `10*3/uL`. The POC keeps both — `unit` holds the human-familiar spelling, `code` holds UCUM for machines.
+
+## A real lesson: look it up, don't trust memory
+
+Mid-project, we hit a classic. We put NHI department code `04` (pediatrics) straight into the encounter's service type; the TW Core validator rejected it: that slot's value set only accepts departments that **cannot be mapped to SNOMED CT** — common departments, being mappable, must be expressed in SNOMED instead.
+
+The fix is not guessing. The TW Core IG package ships an official ConceptMap; you just read it:
+
+```
+01 Family medicine → 419772000 Family practice
+02 Internal med    → 419192003 Internal medicine
+04 Pediatrics      → 24251000087109 General pediatric specialty
+```
+
+Note pediatrics: `24251000087109` — *not* the `394537008` most SNOMED-familiar people would guess. **Terminology mapping always goes through the official map, never through memory.** The lab has an exactly isomorphic rule: check the SOP before signing the report; never work from recall.
+
+## Why this is a time sink — and why it needs dual-background people
+
+This POC mapped 10 lab tests, 6 drugs, 5 departments. A real hospital has **thousands of lab items and tens of thousands of drug records**, and:
+
+- some in-house items don't map to a single LOINC — one local "panel" may equal several LOINC codes
+- some legacy items' definitions are lost to time; you end up excavating SOPs and interviewing senior technologists
+- the mapping demands clinical review — **an engineer cannot tell `GLU-AC` from `GLU-PC` (fasting vs. postprandial glucose); a medical technologist spots it instantly, and knows the clinical consequences of mixing them up**
+
+That last line is the real point of this article. Terminology mapping is the least compressible task in any FHIR adoption, and what blocks it is never technology — it's **translation**: clinical language into engineering language and back. The market has plenty of engineers who write ETL and plenty of technologists who read test definitions. People who do both are vanishingly rare.
+
+## The engineering payoff: the mapping table is itself a FHIR resource
+
+One last piece of design elegance. FHIR models terminology as resources: `CodeSystem` (the dictionary), `ValueSet` (the allowed subset for a field), `ConceptMap` (the crosswalk between dictionaries). Which means your mapping table doesn't have to live in Excel or hard-coded constants: store it on the FHIR server and you get version history, change auditing, access control, and a query API (`$translate`: local code in, standard code out) for free.
+
+**Managing the *interpretation* of data with the same infrastructure that manages the data** — my favorite single idea in FHIR.
+
+> **Decision-maker's view**: when scoping a FHIR project, budget terminology mapping as its own line item with dedicated clinical staffing (lab, pharmacy, records). It determines success more than every purely technical item combined — and the dual-background person who can lead it is worth actively hunting for.
+
+Next, back to hard technology: TW Core's profile machinery, slicing, and the `$validate` operation that makes conformance machine-checkable.
