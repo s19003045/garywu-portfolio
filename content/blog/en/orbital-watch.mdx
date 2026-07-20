@@ -11,6 +11,8 @@ category: "system-design"
 
 Let me be concrete about what I built: a platform called **ORBITAL WATCH** that renders, from a 3D space-view of Earth, where all **18,688 tracked orbital objects** — satellites, rocket bodies, debris — are *right now*. Every object's position is computed in your browser, frame by frame, with the standard SGP4 orbital model. It isn't a pre-recorded animation.
 
+You can try it live: **[satellite.deepwaterslife.com](https://satellite.deepwaterslife.com/)**. Every number and screenshot below is something that live build is actually doing right now.
+
 The idea is simple enough: orbital data is public (CelesTrak updates the global catalog daily), SGP4 is a decades-old proven algorithm, and Cesium can render a real WGS84 Earth. Wire those three together and you should get "a space-view Google Earth, but for satellites." The concept was never the hard part. **Scale** was — drawing one satellite is trivial; computing, rendering, and keeping *eighteen thousand* of them fluid is an entirely different engineering problem.
 
 This post is the log of solving that problem.
