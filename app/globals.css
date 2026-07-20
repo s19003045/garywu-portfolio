@@ -126,6 +126,16 @@ body {
   opacity: 0.4;
 }
 
+/* ─── Data-flow diagram (hero) ──────────────────────────── */
+
+@keyframes led-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}
+.led {
+  animation: led-pulse 2.4s ease-in-out infinite;
+}
+
 /* ─── Prose editorial width ─────────────────────────────── */
 
 .prose-editorial {
@@ -179,6 +189,8 @@ body {
   }
   html { scroll-behavior: auto; }
   body { background-image: none; } /* remove dot-grid animation cost */
+  /* SMIL <animateMotion> ignores the animation-duration kill switch above */
+  .flow-dot { display: none; }
 }
 
 /* ─── Print (Resume → PDF) ───────────────────────────────── */

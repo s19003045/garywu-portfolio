@@ -20,7 +20,7 @@ const TECH_TAGS = new Set<string>([
   'webpack / vite', 'vite', 'webpack',
   'leaflet', 'react-leaflet', 'tanstack query', 'react query', 'zod',
   // Backend / databases / headless CMS
-  'express', 'mysql', 'postgresql', 'mongodb',
+  'express', 'mysql', 'postgresql', 'mongodb', 'rest api', 'rest apis',
   'sparql (graph db)', 'sparql', 'strapi', 'firebase',
   // Frontend frameworks (admin / data)
   'refine', 'refine.dev',

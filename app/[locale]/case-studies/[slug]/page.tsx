@@ -9,6 +9,7 @@ import rehypePrettyCode from 'rehype-pretty-code';
 import { prettyCodeOptions } from '@/lib/mdx-highlight';
 import { Tag } from '@/components/ui/Tag';
 import { mdxComponents } from '@/components/blog/MdxLink';
+import { ArchitectureDiagram } from '@/components/case-studies/ArchitectureDiagram';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { caseStudySchema, breadcrumbSchema } from '@/lib/structured-data';
 import { siteConfig } from '@/lib/site';
@@ -123,7 +124,7 @@ function CaseStudyContent({
       ">
         <MDXRemote
           source={post.content}
-          components={mdxComponents}
+          components={{ ...mdxComponents, ArchitectureDiagram }}
           options={{
             mdxOptions: {
               remarkPlugins: [remarkGfm],

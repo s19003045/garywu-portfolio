@@ -4,6 +4,7 @@ import { Link } from '@/i18n/navigation';
 import { getAllPosts } from '@/lib/mdx';
 import { formatDate } from '@/lib/utils';
 import { Tag } from '@/components/ui/Tag';
+import { DataFlowDiagram } from '@/components/home/DataFlowDiagram';
 import { localeAlternates } from '@/lib/seo';
 import type { Metadata } from 'next';
 
@@ -59,35 +60,43 @@ function HeroSection({ locale }: { locale: string }) {
 
   return (
     <section className="pt-24 pb-16 border-b border-[var(--border)]">
-      <p className="eyebrow mb-8">{t('eyebrow')}</p>
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-16 lg:items-center">
+        <div>
+          <p className="eyebrow mb-8">{t('eyebrow')}</p>
 
-      <h1 className="font-heading font-semibold leading-[1.05] tracking-tight mb-8">
-        <span className="block text-5xl sm:text-6xl lg:text-7xl text-[var(--fg)]">
-          {t('headline_1')}
-        </span>
-        <span className="block text-5xl sm:text-6xl lg:text-7xl text-[var(--accent)]">
-          {t('headline_2')}
-        </span>
-      </h1>
+          <h1 className="font-heading font-semibold leading-[1.05] tracking-tight mb-8">
+            <span className="block text-5xl sm:text-6xl text-[var(--fg)]">
+              {t('headline_1')}
+            </span>
+            <span className="block text-5xl sm:text-6xl text-[var(--accent)]">
+              {t('headline_2')}
+            </span>
+          </h1>
 
-      <p className="text-base text-[var(--fg-muted)] max-w-xl leading-relaxed mb-10">
-        {t('subheadline')}
-      </p>
+          <p className="text-base text-[var(--fg-muted)] max-w-xl leading-relaxed mb-10">
+            {t('subheadline')}
+          </p>
 
-      <div className="flex flex-wrap gap-3">
-        <Link
-          href="/case-studies"
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-[var(--bg)] text-sm font-heading font-semibold rounded hover:opacity-90 transition-opacity"
-        >
-          {t('cta_primary')}
-          <span aria-hidden>→</span>
-        </Link>
-        <Link
-          href="/resume"
-          className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-heading font-medium rounded text-[var(--fg-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-        >
-          {t('cta_secondary')}
-        </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/case-studies"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-[var(--bg)] text-sm font-heading font-semibold rounded hover:opacity-90 transition-opacity"
+            >
+              {t('cta_primary')}
+              <span aria-hidden>→</span>
+            </Link>
+            <Link
+              href="/resume"
+              className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-heading font-medium rounded text-[var(--fg-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+            >
+              {t('cta_secondary')}
+            </Link>
+          </div>
+        </div>
+
+        <div className="mt-14 lg:mt-0 max-w-sm mx-auto lg:max-w-none" aria-hidden="true">
+          <DataFlowDiagram />
+        </div>
       </div>
     </section>
   );
