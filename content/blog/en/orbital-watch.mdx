@@ -1,0 +1,207 @@
+---
+title: "Tracking 18,000 Satellites in the Browser: Building a Real-Time Orbital Monitoring Platform"
+date: "2026-07-21"
+description: "Starting from a simple urge to 'see every satellite above Earth from space,' I propagate all 18,688 tracked orbital objects frame by frame, in the browser. This is the build log — why I measured before choosing an architecture, how I kept 18,000 points at 60fps, three bugs that only surface when you actually run the thing, and the time the test was wrong, not the code."
+tags: ["System Design", "Performance", "WebAssembly", "Web Worker", "CesiumJS", "TypeScript", "Engineering Thinking"]
+category: "system-design"
+---
+
+> **Who this is for**: engineers interested in frontend performance, WebAssembly, 3D visualization, or real-time data systems.
+> **What you'll take away**: how to propagate tens of thousands of objects in real time without dropping frames, how to split a data-heavy frontend across worker threads, and why I think "measure first, trust real execution, mark what you don't know" matters more than any architecture diagram.
+
+Let me be concrete about what I built: a platform called **ORBITAL WATCH** that renders, from a 3D space-view of Earth, where all **18,688 tracked orbital objects** — satellites, rocket bodies, debris — are *right now*. Every object's position is computed in your browser, frame by frame, with the standard SGP4 orbital model. It isn't a pre-recorded animation.
+
+The idea is simple enough: orbital data is public (CelesTrak updates the global catalog daily), SGP4 is a decades-old proven algorithm, and Cesium can render a real WGS84 Earth. Wire those three together and you should get "a space-view Google Earth, but for satellites." The concept was never the hard part. **Scale** was — drawing one satellite is trivial; computing, rendering, and keeping *eighteen thousand* of them fluid is an entirely different engineering problem.
+
+This post is the log of solving that problem.
+
+## What the platform actually does
+
+Before the architecture, here's what it grew into:
+
+- **Space-view Earth** — a Cesium WGS84 ellipsoid with a real day/night terminator driven by the clock, atmospheric glow, and a star field.
+- **Full-catalog real-time tracking** — all 18,688 objects propagated at once, not a sample or a subset. Including 2,622 pieces of orbital debris.
+- **Target telemetry** — click any satellite for live latitude/longitude, altitude, orbital velocity, the full set of orbital elements, plus identity data from SATCAT (which country owns it, when it launched, how big its radar cross-section is).
+- **Ground-station pass prediction** — 24-hour pass forecasts for a chosen station, honestly distinguishing "visible to the naked eye" from "trackable by radio only."
+- **Navigation constellation geometry** — live dilution-of-precision (DOP) for GPS/BeiDou/Galileo/GLONASS.
+- **Time control** — 1× to 3600×, so you can watch orbital planes precess as Earth rotates.
+
+The one-line stack: **CesiumJS (3D Earth) + satellite.js's WebAssembly SGP4 (propagation) + a Web Worker (isolated compute) + Fastify (a thin backend that only proxies and caches data)**.
+
+What decides whether this platform is viable at all is how those pieces combine. And that combination was *measured*, not designed up front.
+
+## First decision: measure, then choose the architecture
+
+I didn't start with an architecture diagram. I started with the dumbest possible code: fetch CelesTrak's full catalog, loop over every satellite in plain JavaScript, run SGP4 on each, and time it.
+
+Because before touching any architecture, I needed one number: **how expensive is it to propagate the whole catalog once, in the browser?** That number decides everything — if it's cheap, keep it on the main thread; if it's expensive, get it off.
+
+Here's the result (16,063 satellites, the catalog size at the time):
+
+| Approach | Time to propagate all satellites per frame |
+|---|---|
+| Plain JavaScript loop | ~79 ms |
+| WebAssembly bulk propagator | ~16 ms |
+
+How bad is 79 milliseconds? To hold 60fps a browser has just **16.7 ms** of budget per frame. Plain JS spent nearly five frames' worth of time *just computing positions* — put that on the main thread and the display locks up.
+
+`satellite.js` ships a WASM `BulkPropagator` that takes the whole batch at once and runs it with SIMD. Same data, 16 ms. Five times faster.
+
+But 16 ms is still the main thread's *entire* per-frame budget. So the real decision was two-layered:
+
+> **Accelerate propagation with WASM, then move the whole thing into a Web Worker.** WASM makes the compute cheap; the worker gets it off the main thread entirely — leaving a full frame of budget for Cesium to render.
+
+That order — measure first, then let the number choose the architecture — is the single most important habit I brought to this project. If I'd built an architecture on intuition, I'd likely have over-engineered somewhere and under-estimated a cost somewhere else. Measuring told me exactly where the bottleneck was and how big it was; the architecture grew as a response to that number.
+
+## Where the data comes from: CelesTrak, SATCAT, and a backend that only caches
+
+Orbital data comes from [CelesTrak](https://celestrak.org/), which updates global element sets daily. But I can't let every user's browser hit CelesTrak directly: there's CORS, and CelesTrak explicitly requires clients to cache for at least two hours or risk being blocked.
+
+So the backend exists for exactly one reason — to be **a well-behaved proxy**: fetch on a schedule, cache to disk, normalize into JSON the frontend likes. No database; a restart just re-fetches.
+
+At first I only loaded active satellites, but the most important part of the orbital environment is actually **debris**. CelesTrak's public service won't give you a single full-catalog query (I tried `GROUP=full` — flatly rejected), but it does offer the major debris clouds as dedicated groups. I aggregated them in:
+
+- 1,919 Fengyun-1C fragments — the 2007 anti-satellite test, the single event that produced the most trackable debris in history
+- 700+ fragments from Cosmos 2251 and Iridium 33 — the 2009 event, the first-ever collision between two satellites in orbit
+
+These four are the most significant debris-generating events humanity has caused. The catalog grew from 16,063 to **18,688** objects.
+
+![Colored by "debris cloud": fragments from the Fengyun-1C anti-satellite test form a distinct red-orange shell in near-polar orbit around 800 km, clearly above the main satellite population](/post_image/orbital-watch-debris-clouds.png)
+
+I also joined in CelesTrak's SATCAT metadata, filling in the identity dimension the GP elements lack — owner country, launch date and site, radar cross-section. All 18,688 objects joined successfully. An unexpected but correct side effect: after adding debris, China's on-orbit object count jumped from 1,445 to 3,364, because anti-satellite debris is attributed to the original owner in SATCAT.
+
+The backend also had a performance problem that's easy to overlook. The full catalog is ~6.7 MB, and initially my API re-serialized it to JSON and re-gzipped it *on every request*. But the catalog only materially changes once every three hours — there's no reason to redo that work each time.
+
+> **Compute the thing that changes once, only once.** I moved serialization, gzip, brotli, and ETag computation to catalog-build time; the route just picks an encoding and sends the bytes.
+
+Response time dropped from 61 ms to **4 ms**. No clever trick — just recognizing that a cost had been placed in the wrong spot.
+
+## Making 18,000 points move in the browser
+
+Now the WASM in the worker computes a fresh batch of positions every 16 ms. The question: how do you hand that batch to the main thread without creating a *new* bottleneck?
+
+Each frame, the worker must give the main thread positions for 18,688 objects (three coordinates each) — nearly 400 KB. With ordinary message passing, those 400 KB get **copied**. A few hundred KB copied a dozen times a second, plus the garbage collection that follows, would eat back the performance I'd just saved.
+
+The answer is Transferable Objects — hand the `ArrayBuffer`'s ownership directly to the main thread, zero-copy. But once transferred, the worker's side of the buffer is dead. So I have the main thread **hand the same buffers back** to the worker to reuse:
+
+```typescript
+// Worker transfers buffer ownership out when returning positions (2nd arg)
+self.postMessage(
+  { type: 'frame', positions, geodetic, valid },
+  [positions.buffer, geodetic.buffer, valid.buffer],
+);
+
+// Main thread hands the same buffers back on the next request
+worker.postMessage(
+  { type: 'propagate', recycle: { positions: buf1, geodetic: buf2 } },
+  [buf1, buf2],
+);
+```
+
+This buffer cycle means the whole data path allocates almost no new memory, and there's no GC jitter over long runs.
+
+And this design directly produced the first real bug I hit on this project.
+
+When the main thread receives the buffers it draws the points immediately — that step is synchronous, no problem. But I also had a UI sampler that runs every 250 ms and reads those positions **later** to fill the telemetry panel. The trouble: by then the buffers had already been handed back to the worker and detached. The read returned `undefined`, `.toFixed()` threw, and the entire telemetry panel and pass predictions crashed together.
+
+The insidious part is that the points on the globe **kept moving** — because the drawing step is synchronous and worked fine. Only the part that read data *after the fact* broke. The fix: have the scene manager hold its own stable copy, and route any "read later" code to that copy instead of touching buffers that can be recycled at any moment.
+
+## Space-view: eclipse, visible passes, Doppler
+
+With stable per-frame positions, you can layer genuinely informative overlays onto Cesium.
+
+One of my favorites is **eclipse detection**. satellite.js can compute the fraction of each satellite currently shadowed by Earth (0 = fully lit, 1 = full umbra). I use it to dim satellites that enter shadow. This isn't just cosmetic — **a satellite in Earth's shadow is invisible to the naked eye**, and that fact is the precondition for judging a "naked-eye visible pass."
+
+And the eclipse gave me the second bug.
+
+I initially expressed the brightness falloff with opacity: lit satellites at full alpha, shadowed ones fading. Logically correct — but the eclipse fraction drifts slightly every frame, so the colors of all 18,000 points differed frame to frame. Cesium therefore had to rewrite the entire color vertex buffer every frame, and the update rate dropped from 15 Hz straight to 7 Hz.
+
+The fix is simple, but only once you locate the problem:
+
+> **Quantize a continuously varying quantity into a finite number of steps.** I quantized brightness into 24 levels. The vast majority of satellites land on the same eclipse level between adjacent frames, so nearly all the color writes disappear, the rate returned to 14 Hz, and there's no visible difference.
+
+As an aside: while building this, I discovered that an earlier performance tweak — setting the points' blend mode to "opaque" — silently disabled the opacity-based dimming entirely. Performance optimizations and later feature needs sometimes fight each other.
+
+![The live sky-status panel: local sun elevation −44.3° (full night), 626 satellites overhead, and the selected ISS with a Doppler shift of +8.17 kHz corresponding to a range rate of −5.596 km/s (approaching). Satellites in shadow are drawn in gray](/post_image/orbital-watch-sky-doppler.png)
+
+For pass prediction, I fixed a logic error I'd shipped from the start. Initially I marked every pass that geometrically cleared the horizon as a "visible pass." But that misleads anyone who actually wants to go outside and *see* a satellite — visibility to the eye also requires that **the satellite itself is sunlit while your location is dark enough** (I use astronomy's civil-twilight threshold of −6°).
+
+With that check added, the effect was immediate: the two ISS passes over Taipei in the next 24 hours would both have been reported "visible," when in fact one happens at 2pm local (daylight) and the other at 10pm local but with the satellite already in shadow — **neither is actually visible to the eye**. This kind of fix doesn't add features; it makes the numbers trustworthy.
+
+## Three bugs that only surface when you actually run it
+
+I've already described two (buffer recycling, the eclipse frame drop). But the most instructive was the third.
+
+I had just wired geodetic coordinates (lat/lon/altitude) into the telemetry panel. On screen everything looked fine — the satellite moved, the numbers ticked, the altitude was right. I almost let it pass.
+
+But my end-to-end acceptance script contained a **physical-invariant check**: a ground-track latitude can never exceed the satellite's orbital inclination. The ISS is inclined at 51.6°, so its sub-satellite latitude cannot exceed 51.6°. The check caught the ISS reporting a latitude of **93.3°** — a latitude that doesn't exist on Earth.
+
+Digging in: satellite.js's `GeodeticPositionCalculator` outputs components in the order `[longitude, latitude, altitude]`, the *reverse* of the single-satellite `eciToGeodetic`. I'd read the order wrong and was treating longitude as latitude. Across the whole catalog, **8,141 of 16,063** objects had a "latitude" above 90° — exactly half, the signature of a lat/lon swap. And on screen, everything still looked normal.
+
+```typescript
+// Wrong: assumed output is [latitude, longitude, altitude]
+geodetic[p]     = radiansToDegrees(geo[p]);     // actually longitude!
+geodetic[p + 1] = radiansToDegrees(geo[p + 1]); // actually latitude!
+
+// Right: BulkPropagator's output order is [longitude, latitude, altitude]
+geodetic[p]     = radiansToDegrees(geo[p + 1]); // latitude
+geodetic[p + 1] = radiansToDegrees(geo[p]);     // longitude
+```
+
+The lesson was concrete: **visualization lies.** A moving, plausible-looking display is no proof the numbers beneath it are right. What actually catches silent errors like this are the invariants that must hold *regardless of how the implementation is written* — latitude never exceeds inclination, longitude stays within ±180°, multi-constellation positioning precision is never worse than a single constellation. I later turned all of these into tests.
+
+## When the test blocked 0.68: the test was wrong, not the code
+
+Here's a story in the opposite direction.
+
+The platform has a navigation-constellation geometry analysis that computes DOP (dilution of precision) for GPS/BeiDou/Galileo/GLONASS — essentially the inverse of a 4×4 matrix. My acceptance test asserted that the combined PDOP must be greater than 1, and it blocked the actual computed value of **0.68**.
+
+![The navigation-geometry panel: a combined four-GNSS PDOP of 0.68 over Taipei, with BeiDou performing best (PDOP 1.01) on 28 visible satellites, better than any single constellation](/post_image/orbital-watch-gnss-dop.png)
+
+The fastest reaction to a failing test is "the code must be wrong, go fix the code." But I stopped and asked — **what if the test is wrong?**
+
+Instead of changing either side, I wrote an independent verification that checked the matrix inversion a completely different way: confirm `inverse × original` equals the identity matrix (error 2.22e-16, numerically perfect), confirm a four-satellite geometry gives PDOP 1.82 (matching the classic case), and confirm cramming all satellites into one small patch of sky gives an explosive value like 666,891 (correctly reflecting a degenerate geometry).
+
+The conclusion: **the code was right; my assertion was wrong.** "PDOP is at least 1" is a rule of thumb from the era of single-constellation GPS with four to eight visible satellites. With all four constellations combined, Taipei often has fifty or sixty visible; DOP falls roughly with the inverse square root of the visible count, and dropping below 1 is entirely normal. I separately computed the theoretical value for 59 uniformly distributed satellites as 0.65 — the same order as the platform's measured 0.68.
+
+So I fixed the test, and wrote down *why* in the comment — so the next person who sees 0.68 doesn't repeat my suspicion.
+
+> A failing test doesn't mean the code is wrong; it means "what the code does" and "what you expected to be correct" disagree. Before fixing, decide which side is actually right.
+
+## The line I deliberately didn't cross
+
+The platform has a feature called "orbital congestion screening" that finds pairs of objects currently close to each other. It's tempting to call it "collision warning" — and I deliberately didn't.
+
+Real conjunction assessment needs covariance data to compute collision probability, and the public catalog simply doesn't provide it. More fundamentally, SGP4's position error on public elements is itself kilometer-scale — the same order as my screening threshold. So the feature can only honestly be a "how crowded is the orbital environment" indicator, never a basis for decisions. In the UI and in the code comments, I spelled that line out.
+
+Likewise, I state plainly in the docs that the debris data is **incomplete** — CelesTrak won't give a full-catalog query, so of the 12,000+ on-orbit fragments SATCAT lists, I can only get about 2,600.
+
+This sounds like advertising my own limitations, but I think it's exactly what engineering should look like:
+
+> **A large part of an engineer's value is whether they can clearly mark what they don't know and what the system can't do.** A feature that claims to "warn of collisions" but really just compares distances is far more dangerous than one that honestly says "this is only a congestion indicator."
+
+(Amusingly, the screening's first run was 74% noise — because the ISS's dozen-odd modules, plus the spacecraft docked to it, share one set of orbital elements, so their mutual distance is always zero. After excluding these "same structure" pairs, the closest remaining pair was China's TIANHUI 2-01A and 2-01B at 0.21 km apart — a formation-flying radar pair deliberately holding sub-kilometer spacing. That's a real orbital phenomenon, exactly what the screening should surface. The reality of data is always dirtier — and more interesting — than the algorithm itself.)
+
+## Packaging it into a container
+
+Finally, I packaged the whole platform into Docker, runnable with a single `docker compose up`.
+
+Two decisions here worth mentioning. The first is a **multi-stage build**: the build stage installs the full dependencies and bundles the frontend inside the container; the runtime stage installs only the server's five production dependencies, leaving out Cesium, React, and Vite. Since the frontend is already static files, the runtime has no use for them. The final image stays at 287 MB instead of dragging in all of Cesium.
+
+The second is persisting the TLE cache in a **named volume**. This isn't just convention — it maps directly to the earlier "CelesTrak requires at least two hours of caching." The volume lets a restarted container reuse its existing cache; in testing, the catalog rebuilt from cache in 75 ms after a restart, never hitting the external service on every restart.
+
+For the health check I use Node 22's built-in `fetch` to probe `/api/health`, so the image doesn't even need curl installed.
+
+## Closing: what this project taught me
+
+Looking back, what this platform really taught me has little to do with satellites and everything to do with engineering habits:
+
+**Measure before choosing an architecture.** That 79ms-vs-16ms number decided the entire Worker + WASM design. Build it on gut feel and I'd likely have built it wrong.
+
+**Visualization lies; physical invariants don't.** A moving, plausible display can't prove the numbers beneath it are right. The coordinate-swap bug was caught by "latitude never exceeds inclination," not by my eyes.
+
+**When a test fails, first ask which side is right.** That DOP value of 0.68 — my expectation was wrong, not the code. Ten minutes of independent verification beats ten minutes "fixing" something that isn't broken.
+
+**Mark the boundaries honestly.** Stating what a feature *can't* do, and which data is missing, isn't weakness — it keeps the people using it from being misled.
+
+Add these habits up and you get what I think it means for a system to be *trustworthy*: not that it looks impressive, but that every number is traceable and every boundary is marked for you.

@@ -35,6 +35,15 @@ const projectsZh: SideProject[] = [
     articleSlug: 'fhir-poc-0-why',
   },
   {
+    id: 'orbital-watch',
+    status: 'live',
+    title: 'ORBITAL WATCH — 太空視角的全球衛星即時監控平台',
+    description:
+      '在瀏覽器裡逐幀傳播全球 18,688 個在軌物件（衛星、火箭本體、碎片），以太空視角的 3D 地球即時呈現。核心是「先量測再選架構」：純 JS 迴圈每幀 79ms，改用 satellite.js 的 WASM 批次傳播器（SIMD）降到 16ms，再隔離進 Web Worker、以 Transferable 零複製回傳位置，讓 1.8 萬顆點維持流暢。含地影判定、肉眼可見過境、都卜勒頻移、GNSS 精度因子與軌道擁擠度篩查；Cesium 3D 地球、Fastify 快取後端、Docker 多階段打包。文章記錄整個建置過程與三個只有實測才浮現的 bug。',
+    tags: ['CesiumJS', 'WebAssembly', 'Web Worker', 'SGP4', 'satellite.js', 'TypeScript', 'Fastify', 'Docker'],
+    articleSlug: 'orbital-watch',
+  },
+  {
     id: 'battle-viz',
     status: 'live',
     title: 'Battle Visualizer — 互動式歷史戰役視覺化',
@@ -72,6 +81,15 @@ const projectsEn: SideProject[] = [
       'A POC that drives the full chain: legacy HIS data → FHIR resources conformant to Taiwan’s TW Core IG 1.0.0 → standard APIs for client apps. It includes a simulated HIS (SQLite with realistic Taiwanese data), a TypeScript ETL (LOINC/SNOMED/ATC terminology mapping, 12 profiles passing $validate with 0 errors), a HAPI FHIR server, and a React viewer. Built on 14 years of medical-lab experience plus software engineering; the article series documents every trade-off and pitfall.',
     tags: ['FHIR', 'TW Core IG', 'HAPI FHIR', 'HL7', 'LOINC', 'TypeScript', 'React', 'Docker'],
     articleSlug: 'fhir-poc-0-why',
+  },
+  {
+    id: 'orbital-watch',
+    status: 'live',
+    title: 'ORBITAL WATCH — A Real-Time, Space-View Global Satellite Monitor',
+    description:
+      "Propagates all 18,688 tracked orbital objects (satellites, rocket bodies, debris) frame by frame in the browser, rendered on a space-view 3D Earth in real time. Built on \"measure before you architect\": a plain-JS loop cost 79ms per frame; satellite.js's WASM bulk propagator (SIMD) cut it to 16ms; a Web Worker then isolates it and Transferable buffers return positions zero-copy — keeping 18k points fluid. Includes eclipse detection, naked-eye visible passes, Doppler shift, GNSS dilution-of-precision, and orbital-congestion screening; a Cesium 3D Earth, a Fastify caching backend, and a multi-stage Docker build. The article is the full build log, including three bugs that only surface at runtime.",
+    tags: ['CesiumJS', 'WebAssembly', 'Web Worker', 'SGP4', 'satellite.js', 'TypeScript', 'Fastify', 'Docker'],
+    articleSlug: 'orbital-watch',
   },
   {
     id: 'battle-viz',
